@@ -275,8 +275,10 @@ body:has(.game-shell) { background: #b6a586; }
 .played-card > small { display: -webkit-box; margin-top: 3px; overflow: hidden; color: #696155; font-size: .64rem; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .global-chip { background: #dfe8dc; }
 .clue-chip { background: #f2dfbd; }
-.rule-tooltip { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; display: none; width: 310px; max-height: 270px; padding: 10px; overflow: hidden; border: 2px solid #403a32; border-radius: 7px; box-shadow: 5px 7px 18px rgb(45 32 15 / 28%); color: #2f2b25; background: #fffaf0; text-align: left; }
-.played-card:hover .rule-tooltip, .played-card:focus-visible .rule-tooltip { display: grid; grid-template-columns: 94px 1fr; gap: 5px 9px; }
+.rule-tooltip { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; display: none; width: 310px; max-height: 270px; padding: 10px; overflow: hidden; border: 2px solid #403a32; border-radius: 7px; box-shadow: 5px 7px 18px rgb(45 32 15 / 28%); color: #2f2b25; background: #fffaf0; pointer-events: none; text-align: left; }
+.played-card > .rule-tooltip, .shop-offer > .rule-tooltip, .hand-card > .rule-tooltip { display: none; }
+.played-card:hover > .rule-tooltip, .shop-offer:hover > .rule-tooltip, .hand-card:hover > .rule-tooltip { display: grid; grid-template-columns: 94px 1fr; gap: 5px 9px; }
+.played-card:hover > .rule-tooltip.text-only-tooltip, .shop-offer:hover > .rule-tooltip.text-only-tooltip, .hand-card:hover > .rule-tooltip.text-only-tooltip { grid-template-columns: 1fr; }
 .played-card:nth-child(n+5) .rule-tooltip { top: auto; bottom: calc(100% + 6px); }
 .rule-tooltip > strong { align-self: end; font-size: .76rem; }
 .rule-tooltip > span { grid-column: 1 / -1; font-size: .65rem; line-height: 1.35; }
@@ -297,7 +299,9 @@ body:has(.game-shell) { background: #b6a586; }
 .game-shell .pending-panel p { margin: 1px 0; font-size: .68rem; }
 .game-shell .number-picker { max-width: 70%; flex-wrap: wrap; justify-content: flex-end; gap: 3px; }
 .game-shell .number-picker button { width: 27px; height: 27px; font-size: .7rem; }
-.game-shell .evaluation { position: absolute; z-index: 13; right: 10px; bottom: 45px; left: 10px; margin: 0; padding: 8px 12px; font-size: .72rem; }
+.game-shell .played-rules-panel .evaluation { display: grid; gap: 3px; margin: 10px 0 0; padding: 7px 9px; font-size: .67rem; box-shadow: none; }
+.game-shell .played-rules-panel .evaluation strong { font-size: .7rem; }
+.game-shell .played-rules-panel .evaluation span { font-size: .65rem; }
 
 .game-shell .setup-panel { height: 100%; margin: 0; padding: clamp(18px, 4vh, 42px); }
 .game-shell .setup-panel h2 { margin-top: 5px; }
@@ -307,12 +311,15 @@ body:has(.game-shell) { background: #b6a586; }
 .shop-columns { display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: 14px; height: calc(100% - 52px); }
 .shop-page .shop-group { min-height: 0; margin: 0; padding: 10px; border: 1px dashed #958a79; }
 .shop-page .shop-group > p { margin: 2px 0 8px; color: #70685d; font-size: .68rem; }
-.shop-page .shop-offer { min-height: 52px; margin-bottom: 5px; padding: 6px 8px; }
+.main-stage:has(.shop-page) { overflow: visible; }
+.shop-page { position: relative; overflow: visible; }
+.shop-page .shop-offer { position: relative; min-height: 52px; margin-bottom: 5px; padding: 6px 8px; overflow: visible; }
+.shop-page .shop-offer > .rule-tooltip { top: auto; right: 0; bottom: calc(100% + 6px); }
 
 .hand-section { min-height: 0; padding-top: 4px; border-top: 2px solid #403a32; }
 .hand-heading { display: flex; justify-content: space-between; height: 24px; color: #665f55; font-size: .7rem; }
-.hand-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 7px; height: calc(100% - 24px); }
-.hand-card { display: grid; grid-template-rows: 17px 26px minmax(0, 1fr) 30px; min-width: 0; min-height: 0; height: 100%; padding: 7px; overflow: hidden; box-shadow: 2px 3px 0 rgb(64 58 50 / 15%); }
+.hand-grid { position: relative; z-index: 2; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 7px; height: calc(100% - 24px); overflow: visible; }
+.hand-card { position: relative; display: grid; grid-template-rows: 17px 26px minmax(0, 1fr) 30px; min-width: 0; min-height: 0; height: 100%; padding: 7px; overflow: visible; box-shadow: 2px 3px 0 rgb(64 58 50 / 15%); }
 .hand-card h3 { margin: 2px 0; overflow: hidden; font-size: .83rem; text-overflow: ellipsis; white-space: nowrap; }
 .hand-card .card-topline { font-size: .6rem; }
 .hand-card .card-topline strong { font-size: .72rem; }
@@ -322,6 +329,16 @@ body:has(.game-shell) { background: #b6a586; }
 .hand-card .single-summary { display: -webkit-box; min-height: 0; margin: 2px 0; overflow: hidden; color: #665f55; font-size: .62rem; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .hand-card .card-actions { align-items: end; flex-wrap: nowrap; gap: 3px; }
 .hand-card .card-actions button { min-height: 25px; padding: 2px 5px; font-size: .6rem; }
+.hand-card .rule-tooltip { top: auto; right: auto; bottom: calc(100% + 8px); left: 50%; width: 250px; transform: translateX(-50%); }
+.hand-card:first-child > .rule-tooltip { right: auto; left: 0; transform: none; }
+.hand-card:last-child > .rule-tooltip { right: 0; left: auto; transform: none; }
+.hand-card:only-child > .rule-tooltip { right: auto; left: 0; transform: none; }
+
+.preview-mechanic-picker { margin: 7px 0 8px; padding: 6px 7px; border: 1px dashed #9b8e78; color: #6f6659; font-size: .64rem; }
+.preview-mechanic-picker > span { display: block; margin-bottom: 5px; }
+.preview-mechanic-picker > div { display: flex; flex-wrap: wrap; gap: 4px; }
+.preview-mechanic-picker button { padding: 3px 6px; border: 1px solid #928572; border-radius: 4px; background: #fffaf0; cursor: pointer; font-size: .64rem; }
+.preview-mechanic-picker button.selected-preview { color: #fffaf0; border-color: #4e6e72; background: #4e6e72; }
 
 @media (max-width: 900px) {
   .game-shell { grid-template-rows: 52px 36px 46px minmax(0, 1fr) 175px; padding: 8px; }
