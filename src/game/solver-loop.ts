@@ -1,5 +1,6 @@
 import { orthogonalNeighbors, surroundingNeighbors } from "./geometry";
 import { cellsObservedByExterior, cellsTouchedByAnchor, clueAnchorOf } from "./puzzle-model";
+import type { PuzzleSolutionLayers, LoopSegment } from "./puzzle-model";
 import { clueCell, hasClueRule, hasGlobalRule, type CompiledPuzzle, type SolveOutcome } from "./solver-model";
 import type { CellId } from "./types";
 
@@ -410,6 +411,7 @@ export function solveLoop(model: CompiledPuzzle): SolveOutcome {
   searchCells.sort((left, right) => (incidence.get(right) ?? 0) - (incidence.get(left) ?? 0));
 
   const solutions = new Set<string>();
+  const solutionLayers: PuzzleSolutionLayers[] = [];
   let timedOut = false;
   let exploredNodes = 0;
 
@@ -730,7 +732,15 @@ export function solveLoop(model: CompiledPuzzle): SolveOutcome {
       const loops = findLoopSolutions(model, visited, requirements, validateCycle, solutionLimit - solutions.size, deadline);
       exploredNodes += loops.exploredNodes;
       timedOut ||= loops.timedOut;
-      for (const signature of loops.signatures) solutions.add(signature);
+      for (const signature of loops.signatures) {
+        if (solutions.has(signature)) continue;
+        solutions.add(signature);
+        const loop: LoopSegment[] = signature.split("|").map((part) => {
+          const separator = part.indexOf("-");
+          return { from: part.slice(0, separator) as import("./types").CellId, to: part.slice(separator + 1) as import("./types").CellId };
+        });
+        solutionLayers.push({ loop });
+      }
     } else {
       for (const value of [0, 1] as const) {
         const branchTrail: number[] = [];
@@ -743,5 +753,5 @@ export function solveLoop(model: CompiledPuzzle): SolveOutcome {
   }
 
   if (!initialConflict && hasGlobalRule(model, "loop.single-cycle")) search();
-  return { count: solutions.size, timedOut, exploredNodes, elapsedMs: performance.now() - started };
+  return { count: solutions.size, timedOut, exploredNodes, elapsedMs: performance.now() - started, solutions: solutionLayers };
 }

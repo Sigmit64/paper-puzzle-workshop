@@ -1,6 +1,7 @@
 import { orthogonalNeighbors } from "./geometry";
 import { cellsTouchedByAnchor, clueAnchorOf, exteriorLineSlots } from "./puzzle-model";
 import { clueCell, hasClueRule, hasGlobalRule, type CompiledPuzzle, type SolveOutcome } from "./solver-model";
+import type { PuzzleSolutionLayers } from "./puzzle-model";
 import type { CellId, ClueAnchor, ClueKind } from "./types";
 
 type LabelMap = Map<CellId, number>;
@@ -12,6 +13,7 @@ export function solveRegion(model: CompiledPuzzle): SolveOutcome {
   const labels = new Int16Array(cells.length).fill(-1);
   const byCell = new Map(cells.map((cell, index) => [cell, index]));
   const solutions = new Set<string>();
+  const solutionLayers: PuzzleSolutionLayers[] = [];
   let exploredNodes = 0;
   let timedOut = false;
 
@@ -62,7 +64,13 @@ export function solveRegion(model: CompiledPuzzle): SolveOutcome {
     if (solutions.size >= model.solutionLimit) return;
     if (depth === cells.length) {
       const assignment = new Map(cells.map((cell, index) => [cell, labels[index]]));
-      if (validateRegionPartition(model, assignment)) solutions.add([...labels].join(","));
+      if (validateRegionPartition(model, assignment)) {
+        const signature = [...labels].join(",");
+        if (!solutions.has(signature)) {
+          solutions.add(signature);
+          solutionLayers.push({ regions: Object.fromEntries(cells.map((cell, index) => [cell, `R${labels[index]}`])) });
+        }
+      }
       return;
     }
     for (let label = 0; label <= maximumLabel + 1; label += 1) {
@@ -77,7 +85,7 @@ export function solveRegion(model: CompiledPuzzle): SolveOutcome {
     labels[0] = 0;
     search(1, 0); // restricted-growth string: first cell is always region 0
   }
-  return { count: solutions.size, timedOut, exploredNodes, elapsedMs: performance.now() - started };
+  return { count: solutions.size, timedOut, exploredNodes, elapsedMs: performance.now() - started, solutions: solutionLayers };
 }
 
 function clueKindsForRule(model: CompiledPuzzle, key: string) {

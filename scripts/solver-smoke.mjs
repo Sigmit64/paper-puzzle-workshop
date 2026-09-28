@@ -22,8 +22,21 @@ const {
   clueAnchorOf,
   compileBoard,
   evaluateBoard,
+  createInitialGame,
+  gameReducer,
   validateRegionPartition,
 } = await import(pathToFileURL(join(output, entry)).href);
+
+let reducerState = createInitialGame();
+reducerState = gameReducer(reducerState, { type: "choose-start-board", boardId: "small" });
+reducerState = gameReducer(reducerState, { type: "set-pending-clue-value", value: 9 });
+reducerState = gameReducer(reducerState, { type: "place-pending-clue", anchor: { kind: "cell", cell: "0:0" } });
+assert(reducerState.boards.find((item) => item.id === "small")?.clues.some((clue) => clue.value === 9), "A max=4 numeric clue must place value 9");
+for (const invalid of [10, -1, 1.5]) {
+  const before = reducerState;
+  const pending = gameReducer({ ...before, pending: { kind: "place-clue", boardId: "small", card: { id: "regression", definitionId: "clue-cell-number" }, fromSetup: false, value: 0 } }, { type: "set-pending-clue-value", value: invalid });
+  assert(pending.pending?.kind === "place-clue" && pending.pending.value === 0, `Reducer must reject numeric clue value ${invalid}`);
+}
 
 const cells = (rows, columns) => Array.from(
   { length: rows * columns },
@@ -1287,6 +1300,22 @@ for (const [puzzle, expected] of cases) {
   const result = evaluateBoard(puzzle);
   if (result.status !== expected) {
     throw new Error(`${puzzle.name}: expected ${expected}, received ${result.status} (${result.detail})`);
+  }
+  if (expected === "unique" && result.solutions?.length !== 1) throw new Error(`${puzzle.name}: unique result must carry one solution layer`);
+  if (expected === "multiple" && (result.solutions?.length !== 2 || JSON.stringify(result.solutions[0]) === JSON.stringify(result.solutions[1]))) throw new Error(`${puzzle.name}: multiple result must carry two distinct layers`);
+  if (expected === "unsat" && result.solutions?.length !== 0) throw new Error(`${puzzle.name}: unsat result must not carry a solution`);
+  if (expected === "unique") {
+    const layer = result.solutions[0];
+    const expectedLayer = puzzle.mechanic === "shade" ? "shading" : puzzle.mechanic === "number" ? "numbers" : puzzle.mechanic === "region" ? "regions" : "loop";
+    if (!layer?.[expectedLayer]) throw new Error(`${puzzle.name}: missing ${expectedLayer} payload`);
+    if (puzzle.mechanic === "loop") {
+      const edges = new Set(puzzle.activeCells);
+      const loop = layer.loop ?? [];
+      if (!loop.length || loop.some((segment) => !edges.has(segment.from) || !edges.has(segment.to) || Math.abs(Number(segment.from.split(":")[0]) - Number(segment.to.split(":")[0])) + Math.abs(Number(segment.from.split(":")[1]) - Number(segment.to.split(":")[1])) !== 1)) throw new Error(`${puzzle.name}: loop payload contains a non-adjacent segment`);
+      const degree = new Map();
+      for (const segment of loop) { degree.set(segment.from, (degree.get(segment.from) ?? 0) + 1); degree.set(segment.to, (degree.get(segment.to) ?? 0) + 1); }
+      if ([...degree.values()].some((value) => value !== 2)) throw new Error(`${puzzle.name}: loop payload is not a closed degree-two cycle`);
+    }
   }
   console.log(`${puzzle.name}: ${result.status} (${result.solverStats?.exploredNodes ?? 0} nodes)`);
 }

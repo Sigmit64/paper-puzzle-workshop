@@ -11,6 +11,7 @@ import {
 } from "./geometry";
 import { cellsObservedByExterior, cellsTouchedByAnchor, clueAnchorOf, exteriorLineSlots } from "./puzzle-model";
 import { clueCell, hasClueRule, hasGlobalRule, type CompiledPuzzle, type SolveOutcome } from "./solver-model";
+import type { PuzzleSolutionLayers } from "./puzzle-model";
 import type { CellId } from "./types";
 
 export function solveShade(model: CompiledPuzzle): SolveOutcome {
@@ -292,6 +293,7 @@ export function solveShade(model: CompiledPuzzle): SolveOutcome {
   }
   const searchCells = [...stableCells].sort((left, right) => (incidence.get(right) ?? 0) - (incidence.get(left) ?? 0));
   const solutions = new Set<string>();
+  const solutionLayers: PuzzleSolutionLayers[] = [];
   let timedOut = false;
   let exploredNodes = 0;
 
@@ -882,7 +884,11 @@ export function solveShade(model: CompiledPuzzle): SolveOutcome {
     const cell = searchCells.find((candidate) => assignments[indexByCell.get(candidate)!] === -1);
     if (!cell) {
       if (colorCanStillConnect(1, connectedRule || snakeRule) && colorCanStillConnect(0, whiteConnectedRule)) {
-        solutions.add(stableCells.map((candidate) => assignments[indexByCell.get(candidate)!]).join(""));
+        const signature = stableCells.map((candidate) => assignments[indexByCell.get(candidate)!]).join("");
+        if (!solutions.has(signature)) {
+          solutions.add(signature);
+          solutionLayers.push({ shading: Object.fromEntries(stableCells.map((candidate) => [candidate, assignments[indexByCell.get(candidate)!] === 1 ? "black" : "white"])) });
+        }
       }
     } else {
       for (const value of [0, 1] as const) {
@@ -896,7 +902,7 @@ export function solveShade(model: CompiledPuzzle): SolveOutcome {
   }
 
   if (!initialConflict) search();
-  return { count: solutions.size, timedOut, exploredNodes, elapsedMs: performance.now() - started };
+  return { count: solutions.size, timedOut, exploredNodes, elapsedMs: performance.now() - started, solutions: solutionLayers };
 }
 
 function windows(cells: CellId[], length: number) {

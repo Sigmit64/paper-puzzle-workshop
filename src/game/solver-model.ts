@@ -1,5 +1,6 @@
 import { clueAnchorOf } from "./puzzle-model";
 import type { BoardMechanic, BoardState, ClueInstance, ClueKind } from "./types";
+import type { PuzzleSolutionLayers } from "./puzzle-model";
 
 export interface CompiledClueRule {
   key: string;
@@ -21,6 +22,7 @@ export interface SolveOutcome {
   timedOut: boolean;
   exploredNodes: number;
   elapsedMs: number;
+  solutions: PuzzleSolutionLayers[];
 }
 
 export function hasGlobalRule(model: CompiledPuzzle, key: string) {

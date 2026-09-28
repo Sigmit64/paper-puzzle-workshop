@@ -5,8 +5,8 @@
 ## 角色边界
 
 - `root` 只负责需求理解、大方向、任务契约、协调、验证和最终交付；不得直接编写或修复实现代码或测试。
-- 具体代码与测试默认由 `gpt-5.6-luna` worker 完成。
-- 所有代码任务至少由独立的 `gpt-5.6-sol` reviewer 验收；高风险使用 `gpt-6-astra`，极高风险再加人工确认。
+- 具体代码与测试由 `gpt-5.6-luna` high worker 完成。
+- 所有代码任务由独立的 `gpt-5.6-sol` high reviewer 验收；禁止使用 GPT-6；极高风险仍需人工确认。
 - 实现者与 reviewer 必须是不同 agent，reviewer 不得参与实现。
 - 返工由 Luna worker 完成；`root` 不代写实现或测试。
 - reviewer 必须查看完整实际 diff 与上下文、独立运行测试，并输出 `PASS` 或 `CHANGES_REQUESTED`。
@@ -37,7 +37,7 @@
 
 - 仅当文件范围互斥且不存在共享可变资源时才允许并行。
 - 强依赖、锁文件、生成物、迁移序列或共享状态必须串行；发现交叉时停止，由 `root` 重拆任务。
-- 中风险任务默认使用 `gpt-5.6-sol` reviewer；高风险任务使用 `gpt-6-astra` reviewer；极高风险任务还必须人工确认。
+- 中风险及高风险任务均使用独立的 `gpt-5.6-sol` high reviewer；禁止使用 GPT-6；极高风险任务还必须人工确认。
 
 ## 项目权威基线
 

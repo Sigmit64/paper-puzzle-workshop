@@ -191,7 +191,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           fromSetup: true,
           value: 0,
         },
-        message: "选择数字 0–4，然后点击盘面中的一个格子放置初始线索。",
+        message: "选择数字 0–9，然后点击盘面中的一个格子放置初始线索。",
       };
     }
 
@@ -201,6 +201,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
 
     case "set-pending-clue-value":
       if (state.pending?.kind !== "place-clue") return state;
+      if (!Number.isInteger(action.value) || action.value < 0 || action.value > 9) return withMessage(state, "线索数字必须是 0–9 的整数。");
       return { ...state, pending: { ...state.pending, value: action.value } };
 
     case "place-pending-clue": {
@@ -210,9 +211,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       const definition = clueEntryForMechanic(pending.card, board?.mechanic ?? null);
       if (!board || !definition?.clue || anchorKindForClue(definition.clue.kind) !== action.anchor.kind) return state;
       const clueDefinition = definition.clue;
-      if (pending.value < clueDefinition.min || pending.value > clueDefinition.max) {
-        return withMessage(state, `当前玩法要求线索值位于 ${clueDefinition.min}–${clueDefinition.max}。`);
-      }
+      if (!Number.isInteger(pending.value) || pending.value < 0 || pending.value > 9) return withMessage(state, "线索数字必须是 0–9 的整数。");
       const geometry = { rows: board.rows, columns: board.columns, activeCells: board.activeCells };
       if (!validateInternalAnchor(geometry, action.anchor)) return withMessage(state, "这个位置不能完整容纳该线索。");
       if (board.clues.some((clue) => {

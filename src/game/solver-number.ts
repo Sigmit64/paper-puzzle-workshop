@@ -1,5 +1,6 @@
 import { orthogonalNeighbors } from "./geometry";
 import { cellsTouchedByAnchor, clueAnchorOf, exteriorLineSlots } from "./puzzle-model";
+import type { PuzzleSolutionLayers } from "./puzzle-model";
 import { clueCell, hasClueRule, hasGlobalRule, type CompiledPuzzle, type SolveOutcome } from "./solver-model";
 import type { CellId, ClueKind } from "./types";
 
@@ -241,6 +242,7 @@ export function solveNumber(model: CompiledPuzzle): SolveOutcome {
   for (const relation of relations) for (const cell of relation.cells) incidence.set(cell, (incidence.get(cell) ?? 0) + 1);
   const ordered = [...cells].sort((left, right) => domains.get(left)!.size - domains.get(right)!.size || (incidence.get(right) ?? 0) - (incidence.get(left) ?? 0));
   const solutions = new Set<string>();
+  const solutionLayers: PuzzleSolutionLayers[] = [];
   let exploredNodes = 0;
   let timedOut = false;
 
@@ -303,7 +305,13 @@ export function solveNumber(model: CompiledPuzzle): SolveOutcome {
     }
     if (solutions.size >= solutionLimit) return;
     if (depth === ordered.length) {
-      if (finalValid()) solutions.add([...assignments].join(","));
+      if (finalValid()) {
+        const signature = [...assignments].join(",");
+        if (!solutions.has(signature)) {
+          solutions.add(signature);
+          solutionLayers.push({ numbers: Object.fromEntries(cells.flatMap((candidate, index) => assignments[index] > 0 ? [[candidate, assignments[index]]] : [])) });
+        }
+      }
       return;
     }
     const cell = ordered[depth];
@@ -317,7 +325,7 @@ export function solveNumber(model: CompiledPuzzle): SolveOutcome {
   }
 
   if (!initialConflict) search(0);
-  return { count: solutions.size, timedOut, exploredNodes, elapsedMs: performance.now() - started };
+  return { count: solutions.size, timedOut, exploredNodes, elapsedMs: performance.now() - started, solutions: solutionLayers };
 }
 
 function pairDifferences(values: number[]) {

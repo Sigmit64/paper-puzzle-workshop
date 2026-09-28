@@ -1,10 +1,17 @@
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cardEntries, clueEntryForMechanic, getCard } from "./game/catalog";
 import { createInitialGame, gameReducer } from "./game/engine";
 import { parseCellId } from "./game/geometry";
 import { anchorKindForClue, clueAnchorOf, validateInternalAnchor } from "./game/puzzle-model";
 import { evaluateBoard } from "./game/solver";
-import type { BoardMechanic, BoardState, CardDefinition, CardInstance, CellId, ClueAnchor, DraftPoint, GameState, ShopOffer } from "./game/types";
+import { SOLVER_COVERAGE } from "./game/solver-coverage";
+import { RULESET, type RuleEntry } from "./game/ruleset";
+import { createRuleExample } from "./game/examples";
+import { ExampleBoard } from "./Rulebook";
+import type { BoardMechanic, BoardState, CardDefinition, CardInstance, CellId, ClueAnchor, DraftPoint, EvaluationResult, GameState, ShopOffer } from "./game/types";
+import type { PuzzleSolutionLayers } from "./game/puzzle-model";
+import { displayRuleText } from "./rule-display";
 
 const MECHANIC_NAMES: Record<BoardMechanic, string> = { shade: "涂黑", loop: "回路", number: "填数", region: "分区" };
 const KIND_NAMES = { global: "全局规则", clue: "线索", tool: "工具" } as const;
@@ -27,43 +34,68 @@ function cardTitle(card: Pick<CardInstance, "definitionId" | "entryDefinitionIds
   return first.kind === "clue" && first.clue ? CLUE_NAMES[first.clue.kind] : first.name;
 }
 
-function LocalRuleSketch({ definition }: { definition: CardDefinition }) {
-  const mechanic = definition.establishesMechanic ?? definition.supportedMechanics[0] ?? "shade";
-  const kind = definition.clue?.kind;
-  return (
-    <svg className="local-rule-sketch" viewBox="0 0 104 72" aria-label="局部示例">
-      {[0, 1, 2].flatMap((row) => [0, 1, 2].map((column) => <rect key={`${row}-${column}`} x={8 + column * 20} y={6 + row * 20} width="20" height="20" />))}
-      {mechanic === "shade" && <><rect className="sketch-shade" x="29" y="27" width="18" height="18" /><rect className="sketch-shade" x="49" y="7" width="18" height="18" /></>}
-      {mechanic === "loop" && <path className="sketch-loop" d="M18 16 H58 V56 H18 V16" />}
-      {mechanic === "number" && <><text x="18" y="21">1</text><text x="38" y="41">2</text><text x="58" y="61">3</text></>}
-      {mechanic === "region" && <path className="sketch-region" d="M28 6 V66 M48 26 H68 M48 46 H68" />}
-      {kind?.includes("cell") || kind === "white-dot" || kind === "black-dot" ? <circle className={kind?.includes("black") ? "sketch-black-dot" : "sketch-clue"} cx="38" cy="36" r="8" /> : null}
-      {kind?.includes("edge") || kind === "given-edge" ? <circle className={kind?.includes("black") ? "sketch-black-dot" : "sketch-clue"} cx="48" cy="36" r="6" /> : null}
-      {kind?.includes("vertex") ? <circle className={kind.includes("black") ? "sketch-black-dot" : "sketch-clue"} cx="48" cy="46" r="6" /> : null}
-      {kind === "exterior-number" && <><circle className="sketch-clue" cx="88" cy="36" r="9" /><text x="88" y="41">2</text></>}
-    </svg>
-  );
+function ruleForDefinition(definition: CardDefinition, mechanic?: BoardMechanic): RuleEntry | undefined {
+  const key = definition.ruleKey ?? (mechanic ? definition.clue?.ruleKeys?.[mechanic] : undefined);
+  const coverage = key ? SOLVER_COVERAGE.find((entry) => entry.ruleKey === key) : undefined;
+  return coverage ? RULESET[coverage.ordinal - 1] : undefined;
 }
 
 function RuleTooltip({ card, mechanic, previewMechanic }: { card: Pick<CardInstance, "definitionId" | "entryDefinitionIds">; mechanic: BoardMechanic | null; previewMechanic?: BoardMechanic }) {
   const entries = entriesFor(card);
-  const fallback = entries[0];
   const selectedMechanic = mechanic ?? previewMechanic;
-  const active = selectedMechanic ? clueEntryForMechanic(card, selectedMechanic) : undefined;
-  const definition = active ?? fallback;
-  if (!definition) return null;
-  return (
-    <span className={`rule-tooltip ${definition.kind === "tool" || (definition.kind === "clue" && selectedMechanic && !active) ? "text-only-tooltip" : ""}`} role="tooltip">
-      {definition.kind !== "tool" && (definition.kind === "global" || !selectedMechanic || active) && <LocalRuleSketch definition={definition} />}
-      <strong>{definition.name}</strong>
-      {definition.kind === "tool" ? <span><b>工具</b>{definition.summary}</span> : definition.kind === "global" ? <span><b>全局规则</b>{definition.summary}</span> : selectedMechanic ? (
-        <span><b>{MECHANIC_NAMES[selectedMechanic]}</b>{active?.clue?.interpretations[selectedMechanic] ?? "无该玩法解释"}</span>
-      ) : entries.map((entry) => {
-        const entryMechanic = entry.supportedMechanics[0];
-        return <span key={entry.id}><b>{entryMechanic ? MECHANIC_NAMES[entryMechanic] : KIND_NAMES[entry.kind]}</b>{entry.clue && entryMechanic ? entry.clue.interpretations[entryMechanic] : entry.summary}</span>;
-      })}
-    </span>
-  );
+  if (!entries.length) return null;
+  const hostRef = useRef<HTMLSpanElement>(null);
+  const tooltipId = useId();
+  const closeTimer = useRef<number | undefined>(undefined);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ left: number; top?: number; bottom?: number; maxHeight: number }>({ left: 12, top: 12, maxHeight: 240 });
+  useEffect(() => {
+    const host = hostRef.current;
+    const trigger = host?.parentElement;
+    if (!trigger) return undefined;
+    const place = () => {
+      const rect = trigger.getBoundingClientRect();
+      const width = Math.min(620, window.innerWidth - 24);
+      const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
+      const safe = 12;
+      const aboveSpace = Math.max(0, rect.top - safe);
+      const belowSpace = Math.max(0, window.innerHeight - rect.bottom - safe);
+      if (aboveSpace >= belowSpace) setPosition({ left, bottom: Math.max(safe, window.innerHeight - rect.top + safe), maxHeight: Math.max(80, aboveSpace - 8) });
+      else setPosition({ left, top: Math.min(window.innerHeight - safe, rect.bottom + safe), maxHeight: Math.max(80, belowSpace - 8) });
+    };
+    const show = () => { if (closeTimer.current) window.clearTimeout(closeTimer.current); place(); setOpen(true); };
+    const hide = () => { closeTimer.current = window.setTimeout(() => setOpen(false), 140); };
+    trigger.addEventListener("mouseenter", show);
+    trigger.addEventListener("mouseleave", hide);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => { trigger.removeEventListener("mouseenter", show); trigger.removeEventListener("mouseleave", hide); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); if (closeTimer.current) window.clearTimeout(closeTimer.current); };
+  }, []);
+  const cancelClose = () => { if (closeTimer.current) window.clearTimeout(closeTimer.current); };
+  const hidePortal = () => { closeTimer.current = window.setTimeout(() => setOpen(false), 140); };
+  const content = <span className="rule-tooltip portal-tooltip" role="tooltip" id={tooltipId} style={{ left: position.left, top: position.top, bottom: position.bottom, maxHeight: position.maxHeight }} onMouseEnter={cancelClose} onMouseLeave={hidePortal}>
+    {entries.map((definition) => { const entryMechanic = selectedMechanic && definition.kind === "clue" && definition.supportedMechanics.includes(selectedMechanic) ? selectedMechanic : definition.supportedMechanics[0]; const rule = ruleForDefinition(definition, entryMechanic); return <span className="tooltip-entry" key={definition.id}><strong>{definition.name}</strong><b>{definition.kind === "tool" ? "工具" : definition.kind === "global" ? "全局规则" : MECHANIC_NAMES[entryMechanic!]}</b><span>{rule ? displayRuleText(rule.text) : definition.kind === "clue" && entryMechanic ? definition.clue?.interpretations[entryMechanic] ?? definition.summary : definition.summary}</span>{rule ? <ExampleBoard example={createRuleExample(rule)} /> : definition.kind !== "tool" && <em>该内建玩法暂无规则图鉴条目。</em>}</span>; })}
+  </span>;
+  return <><span ref={hostRef} className="tooltip-registration" aria-hidden="true" />{open && createPortal(content, document.body)}</>;
+}
+
+function SolutionBoard({ board, solution }: { board: BoardState; solution: PuzzleSolutionLayers }) {
+  const size = 32, pad = 18;
+  const regionAt = (row: number, column: number) => solution.regions?.[`${row}:${column}` as CellId];
+  return <svg className="solution-board" viewBox={`0 0 ${board.columns * size + pad * 2} ${board.rows * size + pad * 2}`} role="img" aria-label={`${board.name}提交时答案`}>
+    {board.activeCells.map((cell) => { const [row, column] = cell.split(":").map(Number); const region = solution.regions?.[cell]; return <rect key={cell} className={`solution-cell ${solution.shading?.[cell] === "black" ? "solution-black" : ""} ${region ? `solution-region-${region}` : ""}`} x={pad + column * size} y={pad + row * size} width={size} height={size} />; })}
+    {Object.entries(solution.regions ?? {}).flatMap(([cell, region]) => { const [row, column] = cell.split(":").map(Number); const x = pad + column * size, y = pad + row * size; const sides = [{ k: "t", show: row === 0 || regionAt(row - 1, column) !== region, x1: x, y1: y, x2: x + size, y2: y }, { k: "l", show: column === 0 || regionAt(row, column - 1) !== region, x1: x, y1: y, x2: x, y2: y + size }, { k: "r", show: column === board.columns - 1 || regionAt(row, column + 1) !== region, x1: x + size, y1: y, x2: x + size, y2: y + size }, { k: "b", show: row === board.rows - 1 || regionAt(row + 1, column) !== region, x1: x, y1: y + size, x2: x + size, y2: y + size }]; return sides.filter((side) => side.show).map((side) => <line className="solution-border" key={`${cell}-${side.k}`} x1={side.x1} y1={side.y1} x2={side.x2} y2={side.y2} />); })}
+    {(solution.loop ?? []).map((segment, index) => { const [fr, fc] = segment.from.split(":").map(Number), [tr, tc] = segment.to.split(":").map(Number); return <line className="solution-loop" key={index} x1={pad + (fc + .5) * size} y1={pad + (fr + .5) * size} x2={pad + (tc + .5) * size} y2={pad + (tr + .5) * size} />; })}
+    {Object.entries(solution.numbers ?? {}).map(([cell, value]) => { const [row, column] = cell.split(":").map(Number); return <text className="solution-number" key={cell} x={pad + (column + .5) * size} y={pad + (row + .5) * size + 5}>{value || ""}</text>; })}
+    {board.clues.map((clue) => { const anchor = clueAnchorOf(clue); if (!anchor) return null; let x = pad, y = pad; if (anchor.kind === "cell") { const [row, column] = anchor.cell.split(":").map(Number); x += (column + .5) * size; y += (row + .5) * size; } else if (anchor.kind === "edge") { x += (anchor.orientation === "vertical" ? anchor.column : anchor.column + .5) * size; y += (anchor.orientation === "horizontal" ? anchor.row : anchor.row + .5) * size; } else if (anchor.kind === "vertex") { x += anchor.column * size; y += anchor.row * size; } else { x += anchor.side === "left" ? -10 : anchor.side === "right" ? board.columns * size + 10 : (anchor.index + .5) * size; y += anchor.side === "top" ? -10 : anchor.side === "bottom" ? board.rows * size + 10 : (anchor.index + .5) * size; } const color = clue.kind.includes("white") ? "white" : clue.kind.includes("black") ? "black" : undefined; return <g key={clue.id} className={`solution-clue ${color ?? "number"}`}><circle cx={x} cy={y} r={color ? 5 : 7} />{!color && <text x={x} y={y + 3}>{clue.value}</text>}</g>; })}
+  </svg>;
+}
+
+function EvaluationModal({ modal, onClose, returnFocusRef }: { modal: { board: BoardState; result: EvaluationResult }; onClose: () => void; returnFocusRef: React.RefObject<HTMLButtonElement | null> }) {
+  const { board, result } = modal; const [showMultiple, setShowMultiple] = useState(false); const showSolutions = result.status === "unique" || (result.status === "multiple" && showMultiple); const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => { const dialog = dialogRef.current; if (!dialog) return; dialog.showModal(); const first = dialog.querySelector<HTMLElement>("button"); first?.focus(); const onKeyDown = (event: KeyboardEvent) => { if (event.key !== "Tab") return; const focusable = [...dialog.querySelectorAll<HTMLElement>("button:not([disabled]), [href], [tabindex]:not([tabindex='-1'])")]; if (!focusable.length) return; const firstFocusable = focusable[0], lastFocusable = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === firstFocusable) { event.preventDefault(); lastFocusable.focus(); } else if (!event.shiftKey && document.activeElement === lastFocusable) { event.preventDefault(); firstFocusable.focus(); } }; dialog.addEventListener("keydown", onKeyDown); return () => { dialog.removeEventListener("keydown", onKeyDown); if (dialog.open) dialog.close(); }; }, []);
+  const close = () => { if (dialogRef.current?.open) dialogRef.current.close(); onClose(); window.setTimeout(() => returnFocusRef.current?.focus(), 0); };
+  return <dialog ref={dialogRef} className={`evaluation-modal evaluation-modal-${result.status}`} onCancel={(event) => { event.preventDefault(); close(); }} aria-labelledby="evaluation-title"><button className="modal-close" onClick={close} aria-label="关闭提交结果">×</button><p className="eyebrow">提交结果</p><h2 id="evaluation-title">{result.status === "unique" ? "唯一解" : result.status === "multiple" ? "多解" : result.status === "unsat" ? "无解" : result.status === "timeout" ? "未证明" : "不支持"}</h2><p>{result.detail}</p>{result.status === "unique" && <div className="celebration" aria-label="庆祝">✦　✓　✦</div>}{result.status === "multiple" && !showMultiple && <button className="primary-button disbelief-button" onClick={() => setShowMultiple(true)}>我不信</button>}{showSolutions && result.solutions?.length ? <div className="solution-compare">{result.solutions.map((solution, index) => <figure key={index}><figcaption>{result.status === "multiple" ? (index === 0 ? "解一" : "解二") : "唯一解"}</figcaption><SolutionBoard board={board} solution={solution} /></figure>)}</div> : null}<div className="modal-score">基础分 {result.baseScore} · 获得 {result.awardedScore}</div><button className="modal-dismiss" onClick={close}>关闭</button></dialog>;
 }
 
 function BoardView({ board, state, dispatch, previewMechanic, onPreviewMechanic }: { board: BoardState; state: GameState; dispatch: Dispatch; previewMechanic?: BoardMechanic; onPreviewMechanic: (mechanic: BoardMechanic) => void }) {
@@ -75,6 +107,8 @@ function BoardView({ board, state, dispatch, previewMechanic, onPreviewMechanic 
   const pendingForBoard = state.pending?.boardId === board.id;
   const pendingCard = state.pending?.kind === "place-clue" ? state.pending.card : undefined;
   const pendingDefinition = pendingCard ? clueEntryForMechanic(pendingCard, board.mechanic) : undefined;
+  const pendingIsNumber = state.pending?.kind === "place-clue" && entriesFor(state.pending.card).some((entry) => entry.clue && ["cell-number", "edge-number", "vertex-number", "exterior-number"].includes(entry.clue.kind));
+  const pendingValue = state.pending?.kind === "place-clue" ? state.pending.value : undefined;
   const pendingAnchorKind = pendingDefinition?.clue ? anchorKindForClue(pendingDefinition.clue.kind) : undefined;
   const pendingToolEffect = state.pending?.kind === "use-tool" ? state.pending.effect : undefined;
   const clueCell = (clue: BoardState["clues"][number]) => {
@@ -182,12 +216,12 @@ function BoardView({ board, state, dispatch, previewMechanic, onPreviewMechanic 
         <div className="capacity-track"><span style={{ width: `${Math.min(100, ((board.globalCards.length + board.clueCards.length) / board.ruleCapacity) * 100)}%` }} /></div>
         <h3>已打出的卡牌</h3>
         {!board.mechanic && board.clueCards.length > 0 && <div className="preview-mechanic-picker" aria-label="玩法预览选择"><span>玩法预览（仅预览，不建立玩法）</span><div>{(Object.keys(MECHANIC_NAMES) as BoardMechanic[]).map((mechanic) => <button key={mechanic} className={previewMechanic === mechanic ? "selected-preview" : ""} onClick={() => onPreviewMechanic(mechanic)}>{MECHANIC_NAMES[mechanic]}</button>)}</div></div>}
+        {state.pending?.kind === "place-clue" && pendingForBoard && <section className="pending-panel"><div><p className="eyebrow">放置线索</p><h2>{cardTitle(state.pending.card)}</h2><p>{board.mechanic ? pendingDefinition?.summary : "盘面尚无主规则；线索会先放置，玩法解释稍后确定。"}</p></div>{pendingIsNumber && <div className="number-picker" aria-label="线索数字（0–9）">{Array.from({ length: 10 }, (_, value) => <button key={value} className={pendingValue === value ? "active-number" : ""} onClick={() => dispatch({ type: "set-pending-clue-value", value })}>{value}</button>)}</div>}</section>}
         <div className="played-card-list">
           {board.globalCards.map((card) => <button key={card.instanceId} className="played-card global-chip" onClick={() => state.pending?.kind === "use-tool" && state.pending.effect === "remove-global-card" && dispatch({ type: "apply-tool", targetId: card.instanceId })}><span>{getCard(card.definitionId).name}</span><small>{getCard(card.definitionId).summary}</small><RuleTooltip card={card} mechanic={board.mechanic} previewMechanic={previewMechanic} /></button>)}
           {board.clueCards.map((card) => <button key={card.instanceId} className={`played-card clue-chip ${card.placedClueId ? "" : "inactive-chip"}`} onClick={() => state.pending?.kind === "use-tool" && state.pending.effect === "remove-clue-card" && dispatch({ type: "apply-tool", targetId: card.instanceId })}><span>{cardTitle(card)} · {entriesFor(card).length} 词条</span><small>{board.mechanic ? clueEntryForMechanic(card, board.mechanic)?.summary ?? "无该玩法解释" : previewMechanic ? clueEntryForMechanic(card, previewMechanic)?.summary ?? "无该玩法解释" : "等待选择预览玩法"}</small><RuleTooltip card={card} mechanic={board.mechanic} previewMechanic={previewMechanic} /></button>)}
           {!board.globalCards.length && !board.clueCards.length && <p className="empty-copy">这里还是一张空白稿纸。可以先打出线索牌，再决定主要玩法。</p>}
         </div>
-        {state.phase !== "setup" && state.lastEvaluation && state.lastEvaluation.boardName === board.name && <section className={`evaluation evaluation-${state.lastEvaluation.status}`}><strong>{state.lastEvaluation.boardName}：{state.lastEvaluation.detail}</strong><span>基础分 {state.lastEvaluation.baseScore} · 获得 {state.lastEvaluation.awardedScore}</span></section>}
       </aside>
     </section>
   );
@@ -221,15 +255,10 @@ export default function App() {
   const [state, dispatch] = useReducer(gameReducer, undefined, createInitialGame);
   const [activeTab, setActiveTab] = useState<string>("small");
   const [previewMechanics, setPreviewMechanics] = useState<Partial<Record<string, BoardMechanic>>>({});
+  const [evaluationModal, setEvaluationModal] = useState<{ board: BoardState; result: EvaluationResult } | null>(null);
+  const submitButtonRef = useRef<HTMLButtonElement>(null);
   const selectedBoard = state.boards.find((board) => board.id === state.selectedBoardId)!;
   const visibleBoard = state.boards.find((board) => board.id === activeTab) ?? selectedBoard;
-  const pendingClueDefinition = state.pending?.kind === "place-clue" ? clueEntryForMechanic(state.pending.card, selectedBoard.mechanic) : null;
-  const pendingEntries = state.pending?.kind === "place-clue"
-    ? (selectedBoard.mechanic && pendingClueDefinition ? [pendingClueDefinition] : entriesFor(state.pending.card).filter((entry) => entry.clue))
-    : [];
-  const pendingMin = pendingEntries.length ? Math.max(...pendingEntries.map((entry) => entry.clue!.min)) : 0;
-  const pendingMax = pendingEntries.length ? Math.min(...pendingEntries.map((entry) => entry.clue!.max)) : 0;
-  const pickerMax = Math.min(40, pendingMax);
   const shopGroups = useMemo(() => (["global", "clue", "tool"] as const), []);
 
   useEffect(() => { if (state.pending) setActiveTab(state.pending.boardId); }, [state.pending]);
@@ -242,7 +271,9 @@ export default function App() {
 
   function submitBoard() {
     if (state.pending) return;
-    dispatch({ type: "resolve-board", boardId: selectedBoard.id, result: evaluateBoard(selectedBoard) });
+    const result = evaluateBoard(selectedBoard);
+    setEvaluationModal({ board: selectedBoard, result });
+    dispatch({ type: "resolve-board", boardId: selectedBoard.id, result });
   }
 
   return (
@@ -256,11 +287,11 @@ export default function App() {
         : activeTab === "shop" ? <section className="shop-page"><div className="section-title"><div><p className="eyebrow">弃牌换购</p><h2>商店</h2></div><span className="trade-count">已选 {state.selectedForTrade.length} 张手牌</span></div><div className="shop-columns">{shopGroups.map((kind) => <section className={`shop-group shop-${kind}`} key={kind}><h3>{KIND_NAMES[kind]}</h3><p>{kind === "global" ? "四种玩法各一张，统一弃 2 张。" : "价格仍按 1 / 2 / 3 张排列。"}</p>{state.shop.filter((offer) => getCard(offer.definitionId).kind === kind).map((offer) => <ShopCard key={offer.id} offer={offer} state={state} dispatch={dispatch} />)}</section>)}</div></section>
         : <BoardView board={visibleBoard} state={state} dispatch={dispatch} previewMechanic={previewMechanics[visibleBoard.id]} onPreviewMechanic={(mechanic) => setPreviewMechanics((current) => ({ ...current, [visibleBoard.id]: mechanic }))} />}
 
-        {state.pending?.kind === "place-clue" && <section className="pending-panel"><div><p className="eyebrow">放置线索</p><h2>{cardTitle(state.pending.card)}</h2><p>{selectedBoard.mechanic ? pendingClueDefinition?.summary : "盘面尚无主规则；线索会先放置，玩法解释稍后确定。"}</p></div>{pendingMax > 0 && <div className="number-picker" aria-label="线索数字">{Array.from({ length: pickerMax - pendingMin + 1 }, (_, index) => index + pendingMin).map((value) => <button key={value} className={state.pending?.kind === "place-clue" && state.pending.value === value ? "active-number" : ""} onClick={() => dispatch({ type: "set-pending-clue-value", value })}>{value}</button>)}</div>}</section>}
-        {activeTab !== "shop" && state.phase !== "setup" && <div className="board-actions"><span>当前：{selectedBoard.name}</span><button onClick={submitBoard} disabled={!!state.pending || !selectedBoard.mechanic}>提交盘面</button><button className="primary-button" onClick={() => dispatch({ type: "end-round" })} disabled={state.phase !== "playing" || !!state.pending}>{state.round === state.maxRounds ? "结束游戏" : "结束回合（弃掉手牌）→"}</button></div>}
+        {activeTab !== "shop" && state.phase !== "setup" && <div className="board-actions"><span>当前：{selectedBoard.name}</span><button ref={submitButtonRef} onClick={submitBoard} disabled={!!state.pending || !selectedBoard.mechanic}>提交盘面</button><button className="primary-button" onClick={() => dispatch({ type: "end-round" })} disabled={state.phase !== "playing" || !!state.pending}>{state.round === state.maxRounds ? "结束游戏" : "结束回合（弃掉手牌）→"}</button></div>}
       </section>
 
       <section className="hand-section"><div className="hand-heading"><span><b>手牌 {state.hand.length}/7</b> · 回合结束全部弃置</span><span>已选 {state.selectedForTrade.length} 张交易</span></div><div className="hand-grid">{state.hand.map((card) => <HandCard key={card.id} card={card} state={state} dispatch={dispatch} />)}{!state.hand.length && <p className="empty-copy">本回合已没有手牌。</p>}</div></section>
+      {evaluationModal && <EvaluationModal modal={evaluationModal} onClose={() => setEvaluationModal(null)} returnFocusRef={submitButtonRef} />}
     </main>
   );
 }

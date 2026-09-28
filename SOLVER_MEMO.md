@@ -9,6 +9,10 @@
 - `npm run test:solver` 通过：151 个端到端求解案例、32 个显式分区约束案例、8 个锚点/不规则拓扑案例。
 - 求解器至多寻找两个不同答案，区分无解、多解、唯一解和超时；无解与多解均为 0 分，唯一解只获得基础分。
 - 未注册规则仍会返回 `unsupported`，不会被静默忽略。
+- 四类求解器在既有最多两个答案的搜索中保留最多两个 `PuzzleSolutionLayers`；未证明状态不携带伪答案。
+- 数字线索 UI 统一接受 0–9，reducer 拒绝非整数和范围外注入；catalog min/max 仅为元数据。
+- 卡牌 tooltip 与图鉴共用完成答案 SVG，通过 `ruleKey → SOLVER_COVERAGE.ordinal → RULESET[ordinal-1]` 映射。
+- 提交模态保存提交时盘面快照，唯一解直接展示，多解点击“我不信”后展示解一、解二。
 
 ## 求解器结构
 

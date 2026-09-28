@@ -121,6 +121,7 @@ export interface EvaluationResult {
   baseScore: number;
   awardedScore: number;
   detail: string;
+  solutions?: import("./puzzle-model").PuzzleSolutionLayers[];
   solverStats?: {
     solutionsFound: number;
     exploredNodes: number;

@@ -5,6 +5,7 @@ import { RULESET, type RuleEntry, type RuleFamily } from "./game/ruleset";
 import { auditRuleset } from "./game/ruleset-audit";
 import type { BoardMechanic, CellId } from "./game/types";
 import type { ClueAnchor, PlacedClue, RuleExample } from "./game/puzzle-model";
+import { displayRuleText } from "./rule-display";
 
 const FAMILY_NAMES: Record<RuleFamily, string> = {
   global: "全局规则",
@@ -17,10 +18,6 @@ const FAMILY_NAMES: Record<RuleFamily, string> = {
   "exterior-number": "外提示数",
 };
 const MECHANIC_NAMES: Record<BoardMechanic, string> = { shade: "涂黑", number: "填数", loop: "回路", region: "分区" };
-
-function displayRuleText(text: string) {
-  return text.replace(/（[^）]*）/g, "").replace(/\s+/g, " ").trim();
-}
 
 function anchorPosition(anchor: ClueAnchor, pad: number, size: number, rows: number, columns: number) {
   if (anchor.kind === "cell") {
@@ -48,7 +45,7 @@ function ClueMark({ clue, pad, size, rows, columns, containedValue }: { clue: Pl
   return <g className="example-clue number-clue"><circle cx={x} cy={y} r="10" /><text x={x} y={y + 4}>{clue.value}</text></g>;
 }
 
-function ExampleBoard({ example }: { example: RuleExample }) {
+export function ExampleBoard({ example }: { example: RuleExample }) {
   const { puzzle } = example;
   const size = 40;
   const pad = 28;

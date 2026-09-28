@@ -267,6 +267,7 @@ function resultWithStats(
     baseScore: baseScore(board),
     awardedScore,
     detail,
+    solutions: outcome.solutions,
     solverStats: {
       solutionsFound: outcome.count,
       exploredNodes: outcome.exploredNodes,
