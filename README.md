@@ -56,7 +56,7 @@ npm run build
 npm run preview:probe -- --port=4173
 ```
 
-访问 `http://127.0.0.1:4173/z3-probe/`，服务器附加 `Cross-Origin-Opener-Policy: same-origin` 和 `Cross-Origin-Embedder-Policy: require-corp`，并为 WASM 返回 `application/wasm`。也可用 `npm run preview` 作为无源站特殊头的对照。使用临时 Playwright 1.63.0 / Chromium 153.0.8010.12（外置临时库）实测：带源站 headers 为 `PASS`，初始化 233.0 ms、两次 check 60.9/38.8 ms、总计 372.1 ms；加入 scope-limited Service Worker 后，无源站 headers 同样为 `PASS`（214.5/61.5/37.3 ms、总计 358.7 ms）。Service Worker 之前的真实 Pages 版本为 `BLOCKED_HEADERS` 且未请求 Z3 重资产；更新后的真实 Pages 仍待部署复测。这些 localhost 数字不是冷缓存、真实网络或真实 Pages 冷启动测量；冷启动未测。
+访问 `http://127.0.0.1:4173/z3-probe/`，服务器附加 `Cross-Origin-Opener-Policy: same-origin` 和 `Cross-Origin-Embedder-Policy: require-corp`，并为 WASM 返回 `application/wasm`。也可用 `npm run preview` 作为无源站特殊头的对照。使用临时 Playwright 1.63.0 / Chromium 153.0.8010.12（外置临时库）实测：带源站 headers 为 `PASS`，初始化 233.0 ms、两次 check 60.9/38.8 ms、总计 372.1 ms；加入 scope-limited Service Worker 后，无源站 headers 同样为 `PASS`（214.5/61.5/37.3 ms、总计 358.7 ms）。真实部署 `https://sigmit64.github.io/paper-puzzle-workshop/z3-probe/` 也已在全新浏览器 context 中通过：首次访问自动重载，随后 `crossOriginIsolated=true`，初始化 3295.9 ms、两次 check 62.0/38.9 ms、总计 3828.7 ms，无 HTTP、控制台或页面错误；正常游戏入口没有 Service Worker 注册或 Z3 请求。这只是一次真实网络样本，不是稳定性能基准。
 
 ## 部署到 GitHub Pages
 
