@@ -2,7 +2,7 @@ import { init, killThreads } from "z3-solver/build/node.js";
 import { solveLoop } from "../src/game/solver-loop";
 import { createLoopZ3BenchmarkFixture } from "../src/game/loop-z3-fixture";
 import { createLoopZ3Session, solveLoopZ3 } from "../src/game/solver-loop-z3";
-import { loopSegmentsFromSignature, validateLoopPilotSolution } from "../src/game/loop-pilot-validator";
+import { loopSegmentsFromSignature, validateLoopSolution } from "../src/game/loop-pilot-validator";
 
 const budgetMs = 2500;
 const fixture = createLoopZ3BenchmarkFixture(budgetMs);
@@ -57,11 +57,11 @@ try {
   const z3Times = z3Samples.map((sample) => Number(sample.elapsedMs));
   const z3Evidence = z3Samples.map((sample) => {
     const signatures = sample.signatures as string[];
-    const validations = signatures.map((candidate) => validateLoopPilotSolution(fixture, loopSegmentsFromSignature(candidate)));
+    const validations = signatures.map((candidate) => validateLoopSolution(fixture, loopSegmentsFromSignature(candidate)));
     const distinct = signatures.length === new Set(signatures).size;
     return { signatures, distinct, validations, valid: signatures.length === 2 && distinct && validations.every((validation) => validation.valid) };
   });
-  const legacyEvidence = legacyVerification.solutions.map((solution) => validateLoopPilotSolution(fixture, solution.loop ?? []));
+    const legacyEvidence = legacyVerification.solutions.map((solution) => validateLoopSolution(fixture, solution.loop ?? []));
   const z3EvidenceValid = z3Evidence.every((evidence) => evidence.valid);
   const z3MultipleProven = z3Samples.every((sample, index) => sample.classification === "multiple" && z3Evidence[index]?.valid);
   const classificationComparable = legacyVerificationClassification !== "timeout";

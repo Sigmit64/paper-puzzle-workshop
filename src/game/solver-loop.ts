@@ -3,7 +3,7 @@ import { cellsObservedByExterior, cellsTouchedByAnchor, clueAnchorOf } from "./p
 import type { PuzzleSolutionLayers, LoopSegment } from "./puzzle-model";
 import { clueCell, hasClueRule, hasGlobalRule, type CompiledPuzzle, type SolveOutcome } from "./solver-model";
 import type { CellId } from "./types";
-import { acceptLoopPilotCandidate, isLoopPilotCompatibleModel, loopOrientationMatches } from "./loop-pilot-validator";
+import { acceptLoopPilotCandidate, isLoopPilotCompatibleModel, loopOrientationMatches, validateLoopSolution } from "./loop-pilot-validator";
 
 type LoopCellRequirement = "straight" | "turn";
 type LoopCellState = 0 | 1 | 2; // 0 回路，1 普通未经过格，2 不参与回路/计数的线索格
@@ -86,9 +86,9 @@ export function solveLoop(model: CompiledPuzzle): SolveOutcome {
   const started = performance.now();
   const deadline = started + model.timeBudgetMs;
   const { board, solutionLimit } = model;
-  // The existing full validator remains useful as search-time pruning for all
-  // 46 loop rules. For the Z3 pilot subset, the shared pure validator below is
-  // the final acceptance gate immediately before a legacy candidate is added.
+  // The existing in-search validator remains useful as pruning for all 46
+  // loop rules. The shared pure validator below is the final acceptance gate
+  // immediately before every legacy candidate is added.
   const pilotCompatible = isLoopPilotCompatibleModel(model);
   const stableCells = [...board.activeCells];
   const searchCells = [...stableCells];
@@ -735,9 +735,14 @@ export function solveLoop(model: CompiledPuzzle): SolveOutcome {
           const separator = part.indexOf("-");
           return { from: part.slice(0, separator) as import("./types").CellId, to: part.slice(separator + 1) as import("./types").CellId };
         });
-        if (pilotCompatible) {
-          if (!acceptLoopPilotCandidate(model, loop, signature)) continue;
-        }
+        // The pure validator is the final acceptance authority for every
+        // loop model. The existing validateCycle remains search pruning; this
+        // gate prevents a future pruning/semantics drift from leaking a
+        // candidate into the public solution layers. Pilot signatures retain
+        // the explicit expected-signature check for benchmark evidence.
+        const sharedValidation = validateLoopSolution(model, loop);
+        if (!sharedValidation.valid) continue;
+        if (pilotCompatible && !acceptLoopPilotCandidate(model, loop, signature)) continue;
         solutions.add(signature);
         solutionLayers.push({ loop });
       }
