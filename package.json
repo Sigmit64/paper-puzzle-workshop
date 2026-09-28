@@ -7,14 +7,18 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "preview:probe": "node scripts/serve-probe.mjs",
     "check": "tsc -b",
-    "test:solver": "node scripts/solver-smoke.mjs"
+    "test:solver": "node scripts/solver-smoke.mjs",
+    "test:z3-probe": "npm run build && node scripts/z3-probe-smoke.mjs && node scripts/z3-probe-audit.mjs"
   },
   "dependencies": {
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "z3-solver": "5.2.0"
   },
   "devDependencies": {
+    "@types/node": "26.6.3",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
