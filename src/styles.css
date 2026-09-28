@@ -358,3 +358,9 @@ dialog.evaluation-modal::backdrop { background: rgb(34 28 21 / 58%); }
   .hand-grid { gap: 3px; }
   .hand-card { padding: 4px; }
 }
+.game-shell.is-solving .main-stage,
+.game-shell.is-solving .hand-section,
+.game-shell.is-solving .workspace-tabs {
+  pointer-events: none;
+  opacity: .72;
+}

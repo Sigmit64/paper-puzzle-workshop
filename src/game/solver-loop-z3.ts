@@ -1,4 +1,3 @@
-import { init } from "z3-solver/build/node.js";
 import { cellsTouchedByAnchor, clueAnchorOf } from "./puzzle-model";
 import type { PuzzleSolutionLayers } from "./puzzle-model";
 import type { CellId, ClueInstance } from "./types";
@@ -24,7 +23,11 @@ export class LoopZ3UnsupportedError extends Error {
   }
 }
 
-type Z3Api = Awaited<ReturnType<typeof init>>;
+/** The Node and browser wrappers expose the same Context API.  Keeping the
+ * encoder independent from either wrapper lets the lazy browser Worker inject
+ * its already-initialized API without pulling Z3 into the main bundle. */
+export type LoopZ3Api = { Context: any };
+type Z3Api = LoopZ3Api;
 type Expr = any;
 
 export interface LoopZ3Session {

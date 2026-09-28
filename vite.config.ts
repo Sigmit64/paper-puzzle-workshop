@@ -26,18 +26,19 @@ function z3ProbeAssets(): Plugin {
           : require.resolve(`z3-solver/build/${fileName}`);
         this.emitFile({
           type: "asset",
-          fileName: `z3-probe/assets/${outputName}`,
+          fileName: `assets/${outputName}`,
           source: readFileSync(sourceFile),
         });
       }
 
       for (const [sourceFile, outputName] of [
+        [resolve(process.cwd(), "coi-bootstrap.js"), "coi-bootstrap.js"],
         [require.resolve("coi-serviceworker/coi-serviceworker.min.js"), "coi-serviceworker.js"],
         [require.resolve("coi-serviceworker/LICENSE"), "COI-SERVICEWORKER-LICENSE.txt"],
       ] as const) {
         this.emitFile({
           type: "asset",
-          fileName: `z3-probe/${outputName}`,
+          fileName: outputName,
           source: readFileSync(sourceFile),
         });
       }

@@ -11,6 +11,8 @@
     "check": "tsc -b",
     "test:solver": "node scripts/solver-smoke.mjs",
     "test:loop-z3": "node scripts/loop-z3-test.mjs",
+    "test:loop-z3-client": "node scripts/loop-z3-client-test.mjs",
+    "test:loop-z3-browser": "npm run build && node scripts/z3-probe-audit.mjs",
     "benchmark:loop-z3": "node scripts/loop-z3-benchmark.mjs",
     "test:z3-probe": "npm run build && node scripts/z3-probe-smoke.mjs && node scripts/z3-probe-audit.mjs"
   },

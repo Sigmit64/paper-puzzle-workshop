@@ -1,4 +1,7 @@
 import "./probe.css";
+import { createLoopZ3BenchmarkFixture } from "../game/loop-z3-fixture";
+import { validateLoopSolution } from "../game/loop-pilot-validator";
+import type { LoopZ3Client } from "../game/loop-z3-client";
 
 type ProbeStatus = "PASS" | "BLOCKED_HEADERS" | "FAIL_ASSET" | "FAIL_INIT" | "FAIL_SOLVE" | "UNKNOWN" | "NOT_RUN";
 
@@ -66,7 +69,10 @@ root.innerHTML = `
       <strong>Status: NOT_RUN</strong>
       <span>Click to lazily initialize Z3 and run the finite-domain uniqueness check.</span>
     </output>
-    <p class="notes">A PASS requires a secure, cross-origin-isolated context and SAT → blocking UNSAT. GitHub Pages does not emit COOP/COEP itself, so this probe uses a scope-limited service worker to add them after an automatic first-load reload. Licenses: <a href="./assets/Z3-LICENSE.txt">Z3 MIT</a> · <a href="./COI-SERVICEWORKER-LICENSE.txt">COI service worker MIT</a>.</p>
+    <hr />
+    <button id="run-production-loop" type="button">Run production 8×8 loop smoke</button>
+    <output id="production-loop-output" class="result" aria-live="polite"><strong>Production loop: NOT_RUN</strong><span>This uses the same lazy Worker/client and full 46-rule encoder as game loop submission.</span></output>
+    <p class="notes">A PASS requires a secure, cross-origin-isolated context and SAT → blocking UNSAT. GitHub Pages does not emit COOP/COEP itself, so the root-scope service worker adds them after an automatic first-load reload. Licenses: <a href="../assets/Z3-LICENSE.txt">Z3 MIT</a> · <a href="../COI-SERVICEWORKER-LICENSE.txt">COI service worker MIT</a>.</p>
   </article>
 `;
 
@@ -77,7 +83,37 @@ if (warning && (!isSecure || !isIsolated || !hasSharedArrayBuffer)) {
 
 const output = document.querySelector<HTMLOutputElement>("#probe-output");
 const button = document.querySelector<HTMLButtonElement>("#run-probe");
-if (!output || !button) throw new Error("Z3 probe controls are missing");
+const productionButton = document.querySelector<HTMLButtonElement>("#run-production-loop");
+const productionOutput = document.querySelector<HTMLOutputElement>("#production-loop-output");
+if (!output || !button || !productionButton || !productionOutput) throw new Error("Z3 probe controls are missing");
+
+const productionFixture = createLoopZ3BenchmarkFixture(2500);
+let productionClient: LoopZ3Client | undefined;
+let productionRuns = 0;
+
+productionButton.addEventListener("click", async () => {
+  productionButton.disabled = true;
+  const run = ++productionRuns;
+  const started = performance.now();
+  productionOutput.innerHTML = `<strong>Production loop: RUNNING ${run}</strong><span>Compiling and solving the fixed 8×8 fixture in the production Worker…</span>`;
+  try {
+    productionClient ??= new (await import("../game/loop-z3-client")).LoopZ3Client();
+    const result = await productionClient.solve(productionFixture);
+    const validations = (result.solutions ?? []).map((solution) => validateLoopSolution(productionFixture, solution.loop ?? []).valid);
+    const valid = result.status === "multiple" && validations.length === 2 && validations.every(Boolean);
+    productionOutput.dataset.status = valid ? "PASS" : "FAIL";
+    productionOutput.dataset.backend = result.solverStats?.backend ?? "unknown";
+    productionOutput.dataset.run = String(run);
+    productionOutput.innerHTML = `<strong>Production loop: ${valid ? "PASS" : "FAIL"}</strong><span>Run ${run}: ${escapeHtml(result.status)} · backend=${escapeHtml(result.solverStats?.backend ?? "unknown")} · solutions=${validations.length} · elapsed=${(performance.now() - started).toFixed(1)} ms</span>${result.solverStats?.diagnostic ? `<span>${escapeHtml(result.solverStats.diagnostic)}</span>` : ""}`;
+  } catch (error) {
+    productionOutput.dataset.status = "ERROR";
+    productionOutput.dataset.run = String(run);
+    productionOutput.innerHTML = `<strong>Production loop: ERROR</strong><span>${escapeHtml(errorMessage(error))}</span>`;
+  } finally {
+    productionButton.disabled = false;
+  }
+});
+window.addEventListener("beforeunload", () => productionClient?.terminate(), { once: true });
 
 let worker: Worker | undefined;
 let workerReady = false;

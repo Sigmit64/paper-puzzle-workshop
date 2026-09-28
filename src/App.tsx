@@ -4,7 +4,8 @@ import { cardEntries, clueEntryForMechanic, getCard } from "./game/catalog";
 import { createInitialGame, gameReducer } from "./game/engine";
 import { parseCellId } from "./game/geometry";
 import { anchorKindForClue, clueAnchorOf, validateInternalAnchor } from "./game/puzzle-model";
-import { evaluateBoard } from "./game/solver";
+import { compileBoard, evaluateCompiledBoard } from "./game/solver";
+import type { LoopZ3Client } from "./game/loop-z3-client";
 import { SOLVER_COVERAGE } from "./game/solver-coverage";
 import { RULESET, type RuleEntry } from "./game/ruleset";
 import { createRuleExample } from "./game/examples";
@@ -95,7 +96,7 @@ function EvaluationModal({ modal, onClose, returnFocusRef }: { modal: { board: B
   const { board, result } = modal; const [showMultiple, setShowMultiple] = useState(false); const showSolutions = result.status === "unique" || (result.status === "multiple" && showMultiple); const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => { const dialog = dialogRef.current; if (!dialog) return; dialog.showModal(); const first = dialog.querySelector<HTMLElement>("button"); first?.focus(); const onKeyDown = (event: KeyboardEvent) => { if (event.key !== "Tab") return; const focusable = [...dialog.querySelectorAll<HTMLElement>("button:not([disabled]), [href], [tabindex]:not([tabindex='-1'])")]; if (!focusable.length) return; const firstFocusable = focusable[0], lastFocusable = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === firstFocusable) { event.preventDefault(); lastFocusable.focus(); } else if (!event.shiftKey && document.activeElement === lastFocusable) { event.preventDefault(); firstFocusable.focus(); } }; dialog.addEventListener("keydown", onKeyDown); return () => { dialog.removeEventListener("keydown", onKeyDown); if (dialog.open) dialog.close(); }; }, []);
   const close = () => { if (dialogRef.current?.open) dialogRef.current.close(); onClose(); window.setTimeout(() => returnFocusRef.current?.focus(), 0); };
-  return <dialog ref={dialogRef} className={`evaluation-modal evaluation-modal-${result.status}`} onCancel={(event) => { event.preventDefault(); close(); }} aria-labelledby="evaluation-title"><button className="modal-close" onClick={close} aria-label="关闭提交结果">×</button><p className="eyebrow">提交结果</p><h2 id="evaluation-title">{result.status === "unique" ? "唯一解" : result.status === "multiple" ? "多解" : result.status === "unsat" ? "无解" : result.status === "timeout" ? "未证明" : "不支持"}</h2><p>{result.detail}</p>{result.status === "unique" && <div className="celebration" aria-label="庆祝">✦　✓　✦</div>}{result.status === "multiple" && !showMultiple && <button className="primary-button disbelief-button" onClick={() => setShowMultiple(true)}>我不信</button>}{showSolutions && result.solutions?.length ? <div className="solution-compare">{result.solutions.map((solution, index) => <figure key={index}><figcaption>{result.status === "multiple" ? (index === 0 ? "解一" : "解二") : "唯一解"}</figcaption><SolutionBoard board={board} solution={solution} /></figure>)}</div> : null}<div className="modal-score">基础分 {result.baseScore} · 获得 {result.awardedScore}</div><button className="modal-dismiss" onClick={close}>关闭</button></dialog>;
+  return <dialog ref={dialogRef} className={`evaluation-modal evaluation-modal-${result.status}`} onCancel={(event) => { event.preventDefault(); close(); }} aria-labelledby="evaluation-title"><button className="modal-close" onClick={close} aria-label="关闭提交结果">×</button><p className="eyebrow">提交结果</p><h2 id="evaluation-title">{result.status === "unique" ? "唯一解" : result.status === "multiple" ? "多解" : result.status === "unsat" ? "无解" : result.status === "timeout" ? "未证明" : "不支持"}</h2><p>{result.detail}</p>{result.solverStats?.backend && <p className="solver-diagnostic">求解后端：{result.solverStats.backend}{result.solverStats.diagnostic ? ` · ${result.solverStats.diagnostic}` : ""}</p>}{result.status === "unique" && <div className="celebration" aria-label="庆祝">✦　✓　✦</div>}{result.status === "multiple" && !showMultiple && <button className="primary-button disbelief-button" onClick={() => setShowMultiple(true)}>我不信</button>}{showSolutions && result.solutions?.length ? <div className="solution-compare">{result.solutions.map((solution, index) => <figure key={index}><figcaption>{result.status === "multiple" ? (index === 0 ? "解一" : "解二") : "唯一解"}</figcaption><SolutionBoard board={board} solution={solution} /></figure>)}</div> : null}<div className="modal-score">基础分 {result.baseScore} · 获得 {result.awardedScore}</div><button className="modal-dismiss" onClick={close}>关闭</button></dialog>;
 }
 
 function BoardView({ board, state, dispatch, previewMechanic, onPreviewMechanic }: { board: BoardState; state: GameState; dispatch: Dispatch; previewMechanic?: BoardMechanic; onPreviewMechanic: (mechanic: BoardMechanic) => void }) {
@@ -256,41 +257,70 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>("small");
   const [previewMechanics, setPreviewMechanics] = useState<Partial<Record<string, BoardMechanic>>>({});
   const [evaluationModal, setEvaluationModal] = useState<{ board: BoardState; result: EvaluationResult } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const loopClientRef = useRef<LoopZ3Client | undefined>(undefined);
+  const submissionToken = useRef(0);
+  const latestStateRef = useRef(state);
+  latestStateRef.current = state;
   const submitButtonRef = useRef<HTMLButtonElement>(null);
   const selectedBoard = state.boards.find((board) => board.id === state.selectedBoardId)!;
   const visibleBoard = state.boards.find((board) => board.id === activeTab) ?? selectedBoard;
   const shopGroups = useMemo(() => (["global", "clue", "tool"] as const), []);
 
   useEffect(() => { if (state.pending) setActiveTab(state.pending.boardId); }, [state.pending]);
+  useEffect(() => () => { submissionToken.current += 1; loopClientRef.current?.terminate(); }, []);
 
   function switchBoard(boardId: string) {
-    if (state.pending) return;
+    if (state.pending || isSubmitting) return;
     dispatch({ type: "select-board", boardId });
     setActiveTab(boardId);
   }
 
-  function submitBoard() {
-    if (state.pending) return;
-    const result = evaluateBoard(selectedBoard);
-    setEvaluationModal({ board: selectedBoard, result });
-    dispatch({ type: "resolve-board", boardId: selectedBoard.id, result });
+  async function submitBoard() {
+    if (state.pending || isSubmitting) return;
+    const board = selectedBoard;
+    const token = ++submissionToken.current;
+    const submittedState = state;
+    const submittedSerial = state.serial;
+    const submittedRevision = board.revision;
+    setEvaluationModal(null);
+    setIsSubmitting(true);
+    try {
+      const compiled = compileBoard(board);
+      const result = "status" in compiled
+        ? compiled
+        : compiled.mechanic === "loop"
+          ? await (loopClientRef.current ??= new (await import("./game/loop-z3-client")).LoopZ3Client()).solve(compiled)
+          : evaluateCompiledBoard(compiled);
+      const currentBoard = latestStateRef.current.boards.find((candidate) => candidate.id === board.id);
+      if (submissionToken.current !== token || latestStateRef.current !== submittedState || latestStateRef.current.serial !== submittedSerial || currentBoard?.revision !== submittedRevision) return;
+      setEvaluationModal({ board, result });
+      dispatch({ type: "resolve-board", boardId: board.id, result });
+    } catch (error) {
+      if (submissionToken.current !== token || latestStateRef.current !== submittedState || latestStateRef.current.serial !== submittedSerial) return;
+      setEvaluationModal({ board, result: { boardName: board.name, status: "timeout", baseScore: 0, awardedScore: 0, detail: `后台求解器发生错误，盘面未结算，可重试。${error instanceof Error ? ` ${error.message}` : ""}`, solverStats: { solutionsFound: 0, exploredNodes: 0, elapsedMs: 0, diagnostic: "worker-error" } } });
+    } finally {
+      if (submissionToken.current === token) setIsSubmitting(false);
+    }
   }
 
+  const guardedDispatch: Dispatch = (action) => { if (!isSubmitting) dispatch(action); };
+
   return (
-    <main className="game-shell">
+    <main className={`game-shell${isSubmitting ? " is-solving" : ""}`} aria-busy={isSubmitting}>
       <header className="topbar"><div><p className="eyebrow">纸笔谜题构筑游戏</p><h1>谜题工坊</h1></div><div className="game-stats"><a className="rulebook-link" href="?view=rules">规则图鉴</a><span>回合 <strong>{state.round}/{state.maxRounds}</strong></span><span>总分 <strong>{state.score}</strong></span><span>牌堆 <strong>{state.deck.length}</strong></span></div></header>
-      <section className="message-strip" aria-live="polite"><span className="scribble">✎</span><span>{state.message}</span>{state.pending && !(state.pending.kind === "place-clue" && state.pending.fromSetup) && <button onClick={() => dispatch({ type: "cancel-pending" })}>取消</button>}</section>
-      <nav className="workspace-tabs" aria-label="工作区">{state.boards.map((board) => <button key={board.id} className={activeTab === board.id ? "active-tab" : ""} onClick={() => switchBoard(board.id)} disabled={!!state.pending && state.pending.boardId !== board.id}><span>{board.name}</span><small>{board.rows}×{board.columns} · {board.globalCards.length + board.clueCards.length}/{board.ruleCapacity}</small></button>)}<button className={activeTab === "shop" ? "active-tab" : ""} onClick={() => !state.pending && setActiveTab("shop")} disabled={!!state.pending}><span>商店</span><small>四种主规则</small></button></nav>
+      <section className="message-strip" aria-live="polite" inert={isSubmitting || undefined}><span className="scribble">✎</span><span>{isSubmitting ? "正在后台求解回路，请稍候…" : state.message}</span>{!isSubmitting && state.pending && !(state.pending.kind === "place-clue" && state.pending.fromSetup) && <button onClick={() => guardedDispatch({ type: "cancel-pending" })}>取消</button>}</section>
+      <nav className="workspace-tabs" aria-label="工作区" inert={isSubmitting || undefined}>{state.boards.map((board) => <button key={board.id} className={activeTab === board.id ? "active-tab" : ""} onClick={() => switchBoard(board.id)} disabled={isSubmitting || (!!state.pending && state.pending.boardId !== board.id)}><span>{board.name}</span><small>{board.rows}×{board.columns} · {board.globalCards.length + board.clueCards.length}/{board.ruleCapacity}</small></button>)}<button className={activeTab === "shop" ? "active-tab" : ""} onClick={() => !isSubmitting && !state.pending && setActiveTab("shop")} disabled={isSubmitting || !!state.pending}><span>商店</span><small>四种主规则</small></button></nav>
 
-      <section className="main-stage">
-        {state.phase === "setup" && !state.pending ? <section className="setup-panel"><p className="eyebrow">开局准备</p><h2>在哪张纸上开始第一道题？</h2><p>选择后建立 Koburin，并立即放置第一枚格内数字。</p><div className="setup-actions">{state.boards.map((board) => <button key={board.id} onClick={() => { setActiveTab(board.id); dispatch({ type: "choose-start-board", boardId: board.id }); }}>{board.name}<small>{board.rows}×{board.columns} · 容量 {board.ruleCapacity}</small></button>)}</div></section>
+      <section className="main-stage" inert={isSubmitting || undefined}>
+        {state.phase === "setup" && !state.pending ? <section className="setup-panel"><p className="eyebrow">开局准备</p><h2>在哪张纸上开始第一道题？</h2><p>选择后建立 Koburin，并立即放置第一枚格内数字。</p><div className="setup-actions">{state.boards.map((board) => <button key={board.id} onClick={() => { if (isSubmitting) return; setActiveTab(board.id); guardedDispatch({ type: "choose-start-board", boardId: board.id }); }} disabled={isSubmitting}>{board.name}<small>{board.rows}×{board.columns} · 容量 {board.ruleCapacity}</small></button>)}</div></section>
         : activeTab === "shop" ? <section className="shop-page"><div className="section-title"><div><p className="eyebrow">弃牌换购</p><h2>商店</h2></div><span className="trade-count">已选 {state.selectedForTrade.length} 张手牌</span></div><div className="shop-columns">{shopGroups.map((kind) => <section className={`shop-group shop-${kind}`} key={kind}><h3>{KIND_NAMES[kind]}</h3><p>{kind === "global" ? "四种玩法各一张，统一弃 2 张。" : "价格仍按 1 / 2 / 3 张排列。"}</p>{state.shop.filter((offer) => getCard(offer.definitionId).kind === kind).map((offer) => <ShopCard key={offer.id} offer={offer} state={state} dispatch={dispatch} />)}</section>)}</div></section>
-        : <BoardView board={visibleBoard} state={state} dispatch={dispatch} previewMechanic={previewMechanics[visibleBoard.id]} onPreviewMechanic={(mechanic) => setPreviewMechanics((current) => ({ ...current, [visibleBoard.id]: mechanic }))} />}
+        : <BoardView board={visibleBoard} state={state} dispatch={guardedDispatch} previewMechanic={previewMechanics[visibleBoard.id]} onPreviewMechanic={(mechanic) => !isSubmitting && setPreviewMechanics((current) => ({ ...current, [visibleBoard.id]: mechanic }))} />}
 
-        {activeTab !== "shop" && state.phase !== "setup" && <div className="board-actions"><span>当前：{selectedBoard.name}</span><button ref={submitButtonRef} onClick={submitBoard} disabled={!!state.pending || !selectedBoard.mechanic}>提交盘面</button><button className="primary-button" onClick={() => dispatch({ type: "end-round" })} disabled={state.phase !== "playing" || !!state.pending}>{state.round === state.maxRounds ? "结束游戏" : "结束回合（弃掉手牌）→"}</button></div>}
+        {activeTab !== "shop" && state.phase !== "setup" && <div className="board-actions"><span>当前：{selectedBoard.name}</span><button ref={submitButtonRef} onClick={submitBoard} disabled={isSubmitting || !!state.pending || !selectedBoard.mechanic}>{isSubmitting ? "求解中…" : "提交盘面"}</button><button className="primary-button" onClick={() => guardedDispatch({ type: "end-round" })} disabled={state.phase !== "playing" || isSubmitting || !!state.pending}>{state.round === state.maxRounds ? "结束游戏" : "结束回合（弃掉手牌）→"}</button></div>}
       </section>
 
-      <section className="hand-section"><div className="hand-heading"><span><b>手牌 {state.hand.length}/7</b> · 回合结束全部弃置</span><span>已选 {state.selectedForTrade.length} 张交易</span></div><div className="hand-grid">{state.hand.map((card) => <HandCard key={card.id} card={card} state={state} dispatch={dispatch} />)}{!state.hand.length && <p className="empty-copy">本回合已没有手牌。</p>}</div></section>
+      <section className="hand-section" inert={isSubmitting || undefined}><div className="hand-heading"><span><b>手牌 {state.hand.length}/7</b> · 回合结束全部弃置</span><span>已选 {state.selectedForTrade.length} 张交易</span></div><div className="hand-grid">{state.hand.map((card) => <HandCard key={card.id} card={card} state={state} dispatch={guardedDispatch} />)}{!state.hand.length && <p className="empty-copy">本回合已没有手牌。</p>}</div></section>
       {evaluationModal && <EvaluationModal modal={evaluationModal} onClose={() => setEvaluationModal(null)} returnFocusRef={submitButtonRef} />}
     </main>
   );

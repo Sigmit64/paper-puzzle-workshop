@@ -43,7 +43,7 @@ self.addEventListener("message", (event: MessageEvent<RunMessage>) => {
 async function runProbe(): Promise<void> {
   const totalStart = performance.now();
   let api: Awaited<ReturnType<typeof init>> | undefined;
-  const z3Built = new URL("./z3-built.js", self.location.href);
+  const z3Built = new URL("../../assets/z3-built.js", self.location.href);
   try {
     // z3-built.js is intentionally a classic script in the official package.
     // Vite emits this worker as a classic IIFE so importScripts is available.

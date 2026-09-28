@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve, relative } from "node:path";
 import { runInNewContext } from "node:vm";
@@ -9,15 +9,17 @@ const dist = resolve("dist");
 const probeHtmlPath = resolve(dist, "z3-probe/index.html");
 assert.ok(existsSync(probeHtmlPath), "dist/z3-probe/index.html is missing");
 
-const z3Js = resolve(dist, "z3-probe/assets/z3-built.js");
-const z3Wasm = resolve(dist, "z3-probe/assets/z3-built.wasm");
-const z3License = resolve(dist, "z3-probe/assets/Z3-LICENSE.txt");
-const coiServiceWorker = resolve(dist, "z3-probe/coi-serviceworker.js");
-const coiLicense = resolve(dist, "z3-probe/COI-SERVICEWORKER-LICENSE.txt");
+const z3Js = resolve(dist, "assets/z3-built.js");
+const z3Wasm = resolve(dist, "assets/z3-built.wasm");
+const z3License = resolve(dist, "assets/Z3-LICENSE.txt");
+const coiServiceWorker = resolve(dist, "coi-serviceworker.js");
+const coiBootstrap = resolve(dist, "coi-bootstrap.js");
+const coiLicense = resolve(dist, "COI-SERVICEWORKER-LICENSE.txt");
 assert.ok(existsSync(z3Js), "official z3-built.js asset is missing");
 assert.ok(existsSync(z3Wasm), "official z3-built.wasm asset is missing");
 assert.ok(existsSync(z3License), "Z3 license asset is missing");
 assert.ok(existsSync(coiServiceWorker), "COI service worker asset is missing");
+assert.ok(existsSync(coiBootstrap), "COI page bootstrap asset is missing");
 assert.ok(existsSync(coiLicense), "COI service worker license is missing");
 assert.ok(statSync(z3Wasm).size > 100_000, "z3-built.wasm is unexpectedly small");
 const z3Text = readFileSync(z3Js, "utf8");
@@ -38,8 +40,19 @@ assert.equal(
   readFileSync(require.resolve("coi-serviceworker/LICENSE"), "utf8"),
   "dist COI service worker license does not match the pinned package",
 );
+assert.equal(
+  readFileSync(coiBootstrap, "utf8"),
+  readFileSync(resolve(process.cwd(), "coi-bootstrap.js"), "utf8"),
+  "dist COI page bootstrap does not match the audited source",
+);
+const coiBootstrapText = readFileSync(coiBootstrap, "utf8");
+assert.doesNotMatch(coiBootstrapText, /navigator\.serviceWorker\.register\s*=|Object\.defineProperty\s*\(\s*navigator\.serviceWorker/, "COI bootstrap patches the native registration API");
+assert.match(coiBootstrapText, /let reloadRequested\s*=\s*false/);
+assert.match(coiBootstrapText, /if \(reloadRequested\) return/);
+await auditBootstrapReloadIdempotence(coiBootstrapText);
 
 const html = readFileSync(probeHtmlPath, "utf8");
+assert.match(html, /coi-bootstrap\.js/, "probe HTML does not load the root COI bootstrap");
 const htmlRefs = [...html.matchAll(/<(script|link)\b([^>]*)>/g)]
   .map((match) => {
     const attributes = match[2];
@@ -55,12 +68,15 @@ const chains = [];
 for (const mount of ["/", "/repo/"]) {
   const htmlUrl = `https://example.test${mount}z3-probe/index.html`;
   const resolvedRefs = htmlRefs.map(({ tag, raw }) => ({ tag, raw, ...assertDistUrl(raw, htmlUrl, mount, "probe HTML") }));
-  const coiRef = resolvedRefs.find(({ raw }) => raw.endsWith("coi-serviceworker.js"));
-  assert.ok(coiRef, `${mount} probe HTML does not load the COI service worker`);
-  assert.equal(coiRef.file, coiServiceWorker, `${mount} probe HTML points at the wrong COI service worker`);
+  const coiRef = resolvedRefs.find(({ raw }) => raw.endsWith("coi-bootstrap.js"));
+  assert.ok(coiRef, `${mount} probe HTML does not load the COI page bootstrap`);
+  assert.equal(coiRef.file, coiBootstrap, `${mount} probe HTML points at the wrong COI bootstrap`);
+  assert.ok(!resolvedRefs.some(({ raw }) => raw.endsWith("coi-serviceworker.js")), `${mount} probe HTML must not execute the Service Worker script as page code`);
+  assert.ok(!resolvedRefs.some(({ url }) => /main-[A-Za-z0-9_-]+\.js$/.test(url.pathname)), `${mount} probe statically loads the game main entry`);
   const uiRef = resolvedRefs.find(({ tag, file }) => tag === "script" && readFileSync(file, "utf8").includes("Experimental compatibility spike"));
   assert.ok(uiRef, `${mount} probe UI module is missing from the HTML reference chain`);
   const uiText = readFileSync(uiRef.file, "utf8");
+  assert.doesNotMatch(uiText, /createRoot|game-shell/, `${mount} probe entry is coupled to the React game entry`);
   assert.match(uiText, /new Worker/, `${mount} probe UI does not create a worker lazily`);
 
   const workerRefs = [...uiText.matchAll(/[`"']((?:\.\.?\/)*(?:[^`"']+\/)*worker-[A-Za-z0-9_-]+\.js)[`"']/g)].map((match) => match[1]);
@@ -109,11 +125,40 @@ for (const mount of ["/", "/repo/"]) {
 }
 
 const gameHtml = readFileSync(resolve(dist, "index.html"), "utf8");
-assert.doesNotMatch(gameHtml, /coi-serviceworker/, "normal game HTML registers the probe service worker");
+assert.match(gameHtml, /coi-bootstrap\.js/, "normal game HTML does not load the root COI bootstrap");
+assert.match(gameHtml, /rel="icon"/, "normal game HTML has no favicon data URL");
+const gameHtmlRefs = [...gameHtml.matchAll(/<script[^>]+src="([^"]+)"/g)].map((match) => match[1]);
+assert.ok(gameHtmlRefs.some((source) => source.endsWith("coi-bootstrap.js")), "normal game HTML does not load the root-scope COI bootstrap");
+assert.ok(!gameHtmlRefs.some((source) => source.endsWith("coi-serviceworker.js")), "normal game HTML must not execute the Service Worker script as page code");
+assert.doesNotMatch(gameHtml, /z3-built|z3-solver|loop-z3-client|loop-z3-worker/, "normal game HTML eagerly references the Z3 or loop Worker assets");
+assert.ok(gameHtmlRefs.every((source) => source.endsWith("coi-bootstrap.js") || !source.includes("z3-built")), "normal game HTML directly references Z3 assets");
+assert.ok(statSync(coiBootstrap).size < 4_000, "root COI bootstrap is not a small first-load shim");
 for (const source of [...gameHtml.matchAll(/<script[^>]+src="([^"]+)"/g)].map((match) => match[1])) {
   const gameScript = readFileSync(resolve(dist, `.${new URL(source, "https://example.test/").pathname}`), "utf8");
-  assert.doesNotMatch(gameScript, /z3-built|z3-pages-probe|z3-solver/, "game entry bundle contains probe/Z3 code");
+  assert.doesNotMatch(gameScript, /z3-built|z3-pages-probe|z3-solver|createLoopZ3Session/, "game entry bundle contains Z3 implementation code");
 }
+const gameModuleRef = gameHtmlRefs.find((source) => !source.endsWith("coi-bootstrap.js"));
+assert.ok(gameModuleRef, "normal game module is missing");
+const gameScript = readFileSync(resolve(dist, `.${new URL(gameModuleRef, "https://example.test/").pathname}`), "utf8");
+const loopClientName = readdirSync(resolve(dist, "assets")).find((name) => /^loop-z3-client-[A-Za-z0-9_-]+\.js$/.test(name));
+assert.ok(loopClientName, "lazy loop client chunk is missing");
+const loopClientText = readFileSync(resolve(dist, "assets", loopClientName), "utf8");
+assert.doesNotMatch(loopClientText, /solveLoop|evaluateCompiledBoard|legacy-fallback/, "main-thread loop client contains a synchronous legacy fallback");
+const loopWorkerRefs = [...loopClientText.matchAll(/[`"']((?:\.\.?\/)*(?:[^`"']+\/)*loop-z3-worker-[A-Za-z0-9_-]+\.js)[`"']/g)].map((match) => match[1]);
+assert.equal(new Set(loopWorkerRefs).size, 1, "normal game must contain one lazy loop Worker URL");
+const loopWorker = assertDistUrl(loopWorkerRefs[0], new URL(`https://example.test/assets/${loopClientName}`), "/", "normal game → loop Worker");
+const loopWorkerText = readFileSync(loopWorker.file, "utf8");
+assert.match(loopWorkerText, /LoopZ3|loop-z3/, "loop Worker does not use the full Z3 encoder");
+assert.match(loopWorkerText, /legacy-fallback|crossOriginIsolated/, "loop Worker has no observable legacy fallback path");
+assert.match(loopWorkerText, /z3-built\.js/, "loop Worker does not lazily reference the Z3 asset");
+const productionAlias = loopWorkerText.match(/([A-Za-z_$][\w$]*)\.global\?\?=globalThis/);
+assert.ok(productionAlias, "production loop Worker is missing the global alias before browser Z3 init");
+const productionVm = await simulateProductionWorker(loopWorkerText, false);
+assert.equal(productionVm.status, "result", "production loop Worker VM did not return a structured result");
+assert.match(productionVm.diagnostic, /asset\/init failed|legacy-fallback/, "production loop Worker VM did not classify init fallback");
+const productionVmMutation = await simulateProductionWorker(loopWorkerText.replace(productionAlias[0], ""), true);
+assert.equal(productionVmMutation.status, "result", "mutated production Worker did not return a result");
+assert.match(productionVmMutation.diagnostic, /global is not defined/, "deleting production Worker global alias did not break the init wiring");
 
 const appWorkerBytes = statSync(resolve(process.cwd(), chains[0].applicationWorker)).size;
 console.log(JSON.stringify({
@@ -133,6 +178,31 @@ function assertDistUrl(raw, baseUrl, mount, label) {
   assert.ok(file.startsWith(`${dist}/`), `${label} resolves outside dist`);
   assert.ok(existsSync(file) && statSync(file).isFile(), `${label} URL does not resolve to a file: ${url.pathname}`);
   return { url, file };
+}
+
+async function auditBootstrapReloadIdempotence(source) {
+  const listeners = new Map();
+  let reloads = 0;
+  const serviceWorker = {
+    controller: null,
+    register: () => Promise.resolve({ active: {}, installing: null, waiting: null }),
+    addEventListener: (type, callback) => listeners.set(type, callback),
+  };
+  const sandbox = {
+    URL,
+    document: { currentScript: { src: "https://example.test/repo/coi-bootstrap.js" }, baseURI: "https://example.test/repo/" },
+    location: { pathname: "/repo/", reload: () => { reloads += 1; } },
+    navigator: { serviceWorker },
+    window: { crossOriginIsolated: false },
+    sessionStorage: { getItem: () => { throw new Error("storage blocked"); }, setItem: () => { throw new Error("storage blocked"); } },
+    Promise,
+  };
+  runInNewContext(source, sandbox, { filename: "coi-bootstrap-audit.js" });
+  await Promise.resolve();
+  listeners.get("controllerchange")?.();
+  await Promise.resolve();
+  assert.equal(reloads, 1, "active and controllerchange notifications must trigger exactly one reload when storage is unavailable");
+  assert.equal(serviceWorker.register.name, "register", "audit fixture must expose the native registration shape");
 }
 
 async function simulateWorker(source, workerHref, expectedZ3Url) {
@@ -172,4 +242,42 @@ async function simulateWorker(source, workerHref, expectedZ3Url) {
     overrides,
     expectedZ3Url,
   };
+}
+
+async function simulateProductionWorker(source, mutated) {
+  const messages = [];
+  let handler;
+  const sandbox = {
+    URL,
+    performance,
+    Promise,
+    setTimeout,
+    clearTimeout,
+    SharedArrayBuffer,
+    crossOriginIsolated: true,
+    location: { href: "https://example.test/z3-probe/assets/loop-z3-worker.js" },
+    postMessage: (message) => messages.push(message),
+    addEventListener: (type, callback) => { if (type === "message") handler = callback; },
+    importScripts: () => {
+      if (mutated && !sandbox.global) throw new Error("global is not defined");
+      sandbox.initZ3 = () => Promise.reject(new Error("audit init stub"));
+    },
+  };
+  sandbox.self = sandbox;
+  sandbox.globalThis = sandbox;
+  runInNewContext(source, sandbox, { filename: "production-loop-worker-audit.js" });
+  const model = {
+    board: { id: "audit", name: "audit", rows: 2, columns: 2, activeCells: ["0:0", "0:1", "1:0", "1:1"], ruleCapacity: 4, mechanic: "loop", globalCards: [], clueCards: [], clues: [], draftStrokes: [], revision: 0 },
+    mechanic: "loop",
+    globalRuleKeys: ["loop.single-cycle"],
+    clueRules: [],
+    solutionLimit: 1,
+    timeBudgetMs: 100,
+  };
+  assert.equal(typeof handler, "function", "production loop Worker VM did not register a message handler");
+  await handler({ data: { type: "solve", requestId: "audit-1", model } });
+  await new Promise((resolveMessage) => setTimeout(resolveMessage, 0));
+  const result = messages.find((message) => message.type === "result");
+  assert.ok(result, "production loop Worker VM emitted no result");
+  return { status: result.type, diagnostic: result.result?.solverStats?.diagnostic ?? "" };
 }

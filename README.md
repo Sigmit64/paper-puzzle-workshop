@@ -35,7 +35,7 @@ npm run test:solver
 
 ## Z3 GitHub Pages 兼容性探针（实验性）
 
-`/z3-probe/` 是与正常游戏入口隔离的实验页面。它固定使用官方 `z3-solver@5.2.0`（MIT），只有点击按钮后才加载应用级 Worker 和官方 Emscripten JS/WASM 资产；它不迁移或调用游戏的 159 条正式规则。页面提供 Z3 与 `coi-serviceworker@0.1.7` 的 MIT 许可证链接。
+`/z3-probe/` 是与正常游戏界面隔离的诊断页面。它固定使用官方 `z3-solver@5.2.0`（MIT），只有点击按钮后才加载应用级 Worker 和官方 Emscripten JS/WASM 资产；页面另有一个 production 8×8 loop smoke 按钮，复用正式 loop client/Worker/46-key encoder。页面提供 Z3 与 `coi-serviceworker@0.1.7` 的 MIT 许可证链接。
 
 构建、运行 Node 侧最小模型（第一次 `sat`，加入规范答案阻断后第二次 `unsat`），并审计构建产物：
 
@@ -47,7 +47,7 @@ npm run test:z3-probe
 
 当前 production 构建中，官方 `z3-built.wasm` 为 34,938,413 bytes（约 8.0 MB gzip），官方 JS 为 353,813 bytes，应用级 Worker 为 162,713 bytes。WASM 下载和冷启动对移动网络、低端设备和首个点击延迟有明显风险；本探针不会把这些成本带入游戏首屏，但不能代表正式求解器迁移后的性能。
 
-GitHub Pages 不会由本仓库工作流设置 COOP/COEP 响应头。探针因此在自身 `/z3-probe/` 范围注册 `coi-serviceworker`：首次访问会自动重载，由 Service Worker 为受控响应补充 COOP/COEP。该注册不会覆盖正常游戏入口；若注册失败或浏览器不支持相应能力，探针仍判为 `BLOCKED_HEADERS`。这是一层客户端兼容方案，不等价于源站直接发送安全头。
+GitHub Pages 不会由本仓库工作流设置 COOP/COEP 响应头。项目根入口和 `/z3-probe/` 都加载同一个根 scope 的 `coi-bootstrap.js`；它只调用浏览器原生 `navigator.serviceWorker.register` 注册官方 `coi-serviceworker@0.1.7`，不改写该 API。首次访问会至多自动重载一次，由 Service Worker 为整个项目受控响应补充 COOP/COEP。若注册失败或浏览器不支持相应能力，正式 loop Worker 会在后台明确回退 legacy；其它玩法仍可用。这是一层客户端兼容方案，不等价于源站直接发送安全头。
 
 要在本地做带正确响应头的对照（production `dist`，只读静态服务器）：
 
@@ -56,7 +56,7 @@ npm run build
 npm run preview:probe -- --port=4173
 ```
 
-访问 `http://127.0.0.1:4173/z3-probe/`，服务器附加 `Cross-Origin-Opener-Policy: same-origin` 和 `Cross-Origin-Embedder-Policy: require-corp`，并为 WASM 返回 `application/wasm`。也可用 `npm run preview` 作为无源站特殊头的对照。使用临时 Playwright 1.63.0 / Chromium 153.0.8010.12（外置临时库）实测：带源站 headers 为 `PASS`，初始化 233.0 ms、两次 check 60.9/38.8 ms、总计 372.1 ms；加入 scope-limited Service Worker 后，无源站 headers 同样为 `PASS`（214.5/61.5/37.3 ms、总计 358.7 ms）。真实部署 `https://sigmit64.github.io/paper-puzzle-workshop/z3-probe/` 也已在全新浏览器 context 中通过：首次访问自动重载，随后 `crossOriginIsolated=true`，初始化 3295.9 ms、两次 check 62.0/38.9 ms、总计 3828.7 ms，无 HTTP、控制台或页面错误；正常游戏入口没有 Service Worker 注册或 Z3 请求。这只是一次真实网络样本，不是稳定性能基准。
+访问 `http://127.0.0.1:4174/z3-probe/` 可复现带根 scope Service Worker 的本地验证。外置 Chromium 实测通过：首次访问 root game 自动 reload 后 `crossOriginIsolated=true`、controller 存在且 UI 正常；main/probe 首屏均无 Z3/Worker 请求；production 8×8 smoke cold/warm 分别约 1545.6/1032.6 ms，均返回 `multiple`、`backend=z3`、2 solutions，并请求 `z3-built.js/.wasm`。阻断 Service Worker 的 context 仍无 page/console/http error，小 2×2 提交由同一 Worker 返回 `unique`、`backend=legacy-fallback`；bootstrap 验证原生 `navigator.serviceWorker.register` 的 source/name/length 未改变。这只是本机浏览器样本，不是 Pages 性能基准。
 
 ## 部署到 GitHub Pages
 
@@ -96,9 +96,23 @@ Vite 已使用相对资源路径，因此用户主页仓库和普通项目仓库
 - `src/game/solver.ts`：规则编译注册表、提交检查和统一求解入口。
 - `src/game/solver-model.ts`：编译结果与搜索结果协议。
 - `src/game/solver-loop.ts`：不规则盘面的单回路、Koburin 数字与转弯/直行点求解。
+- `src/game/solver-loop-z3.ts`：完整 46-key loop SMT encoder；只由 lazy loop Worker 导入。
+- `src/game/loop-z3-client.ts`、`src/game/loop-z3-worker.ts`：正式 loop 提交的 requestId 协议、Z3 初始化复用、stale/duplicate/crash 处理与同 Worker legacy fallback。
 - `src/game/solver-shade.ts`：涂黑连通、九宫格数字与黑白点求解。
 - `src/App.tsx`：React 交互界面。
 - `src/Rulebook.tsx`：游戏内规则示例图鉴。
+
+## 正式回路提交与浏览器资源
+
+正式 loop 提交先在主线程通过唯一的 `compileBoard` 路径编译，再将纯结构化克隆安全的 `CompiledPuzzle` 发送给 lazy Worker。Worker 首次 loop 提交才加载根 scope 下的 `assets/z3-built.js/.wasm` 并初始化 Z3；后续提交复用初始化 API。Z3 的 unknown/timeout 映射为现有“未证明”，不会偷偷改用更长预算；资产、初始化、unsupported 或 Worker 求解协议失败则在同一 Worker 明确回退 `legacy-fallback`，结果诊断显示在提交模态中。
+
+提交期间 UI 显示 busy 状态；native `disabled`/`inert` 与 handler guard 同时阻止键盘、改盘、换牌、商店、结束回合和重复提交。提交快照绑定 state identity、serial、board revision、requestId 与组件生命周期，任何竞态状态变化都会丢弃 response，不显示旧 modal 或计分。唯一解、多解（“我不信”）、无解、计分和刷新盘面的既有行为保持不变。shade/number/region 仍使用同步 legacy solver。根 COI shim 约 2.27 KB，Z3 JS/WASM 不在正常游戏首屏请求链；WASM 下载、初始化和以下 Node benchmark 都不代表浏览器性能。首次根 scope Service Worker reload 可能丢失未持久化的当前 UI 状态，这是 Pages 客户端 shim 的已知风险。
+
+异步协议测试：
+
+```bash
+npm run test:loop-z3-client
+```
 
 当前求解层支持涂黑、回路、填数和分区四种答案域，并已为 `ruleset.txt` 的 159 条规则建立卡牌解释、约束编译器与覆盖审计。搜索器至多寻找两个不同答案，能区分无解、多解、唯一解与超时；未注册的未来规则会返回 `unsupported` 并保留原盘面，不会被误判为无解。删除格、四类线索锚点以及跨缺口外提示均使用统一盘面模型。
 

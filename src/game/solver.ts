@@ -260,6 +260,8 @@ function resultWithStats(
   status: EvaluationResult["status"],
   detail: string,
   awardedScore: number,
+  backend: "legacy" | "z3" | "legacy-fallback" = "legacy",
+  diagnostic?: string,
 ): EvaluationResult {
   return {
     boardName: board.name,
@@ -272,25 +274,36 @@ function resultWithStats(
       solutionsFound: outcome.count,
       exploredNodes: outcome.exploredNodes,
       elapsedMs: Math.round(outcome.elapsedMs * 10) / 10,
+      backend,
+      ...(diagnostic ? { diagnostic } : {}),
     },
   };
 }
 
-export function evaluateBoard(board: BoardState): EvaluationResult {
-  const compiled = compileBoard(board);
-  if ("status" in compiled) return compiled;
-  const solved = compiled.mechanic === "loop"
+export function evaluateCompiledBoard(
+  compiled: CompiledPuzzle,
+  solved?: SolveOutcome,
+  backend: "legacy" | "z3" | "legacy-fallback" = "legacy",
+  diagnostic?: string,
+): EvaluationResult {
+  const outcome = solved ?? (compiled.mechanic === "loop"
     ? solveLoop(compiled)
     : compiled.mechanic === "shade"
       ? solveShade(compiled)
       : compiled.mechanic === "number"
         ? solveNumber(compiled)
-        : solveRegion(compiled);
-  const base = baseScore(board);
-  if (solved.timedOut && solved.count < 2) {
-    return resultWithStats(board, solved, "timeout", "求解在时间预算内未能证明结论；盘面保持原样，可调整后重新提交。", 0);
+        : solveRegion(compiled));
+  const base = baseScore(compiled.board);
+  if (outcome.timedOut && outcome.count < 2) {
+    return resultWithStats(compiled.board, outcome, "timeout", "求解在时间预算内未能证明结论；盘面保持原样，可调整后重新提交。", 0, backend, diagnostic);
   }
-  if (solved.count === 0) return resultWithStats(board, solved, "unsat", "盘面无解。", 0);
-  if (solved.count === 1) return resultWithStats(board, solved, "unique", "盘面具有唯一解，获得基础分。", base);
-  return resultWithStats(board, solved, "multiple", "盘面有多个解，不获得分数。", 0);
+  if (outcome.count === 0) return resultWithStats(compiled.board, outcome, "unsat", "盘面无解。", 0, backend, diagnostic);
+  if (outcome.count === 1) return resultWithStats(compiled.board, outcome, "unique", "盘面具有唯一解，获得基础分。", base, backend, diagnostic);
+  return resultWithStats(compiled.board, outcome, "multiple", "盘面有多个解，不获得分数。", 0, backend, diagnostic);
+}
+
+export function evaluateBoard(board: BoardState): EvaluationResult {
+  const compiled = compileBoard(board);
+  if ("status" in compiled) return compiled;
+  return evaluateCompiledBoard(compiled);
 }

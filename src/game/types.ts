@@ -126,6 +126,8 @@ export interface EvaluationResult {
     solutionsFound: number;
     exploredNodes: number;
     elapsedMs: number;
+    backend?: "legacy" | "z3" | "legacy-fallback";
+    diagnostic?: string;
   };
 }
 
