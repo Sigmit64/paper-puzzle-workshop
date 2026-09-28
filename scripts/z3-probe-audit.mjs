@@ -12,9 +12,13 @@ assert.ok(existsSync(probeHtmlPath), "dist/z3-probe/index.html is missing");
 const z3Js = resolve(dist, "z3-probe/assets/z3-built.js");
 const z3Wasm = resolve(dist, "z3-probe/assets/z3-built.wasm");
 const z3License = resolve(dist, "z3-probe/assets/Z3-LICENSE.txt");
+const coiServiceWorker = resolve(dist, "z3-probe/coi-serviceworker.js");
+const coiLicense = resolve(dist, "z3-probe/COI-SERVICEWORKER-LICENSE.txt");
 assert.ok(existsSync(z3Js), "official z3-built.js asset is missing");
 assert.ok(existsSync(z3Wasm), "official z3-built.wasm asset is missing");
 assert.ok(existsSync(z3License), "Z3 license asset is missing");
+assert.ok(existsSync(coiServiceWorker), "COI service worker asset is missing");
+assert.ok(existsSync(coiLicense), "COI service worker license is missing");
 assert.ok(statSync(z3Wasm).size > 100_000, "z3-built.wasm is unexpectedly small");
 const z3Text = readFileSync(z3Js, "utf8");
 assert.match(z3Text, /var initZ3\s*=|function initZ3/, "z3-built.js is not the official initializer shape");
@@ -23,6 +27,16 @@ assert.equal(
   readFileSync(z3License, "utf8"),
   readFileSync(require.resolve("z3-solver/LICENSE.txt"), "utf8"),
   "dist Z3 license does not match the installed official package",
+);
+assert.equal(
+  readFileSync(coiServiceWorker, "utf8"),
+  readFileSync(require.resolve("coi-serviceworker/coi-serviceworker.min.js"), "utf8"),
+  "dist COI service worker does not match the pinned package",
+);
+assert.equal(
+  readFileSync(coiLicense, "utf8"),
+  readFileSync(require.resolve("coi-serviceworker/LICENSE"), "utf8"),
+  "dist COI service worker license does not match the pinned package",
 );
 
 const html = readFileSync(probeHtmlPath, "utf8");
@@ -41,15 +55,19 @@ const chains = [];
 for (const mount of ["/", "/repo/"]) {
   const htmlUrl = `https://example.test${mount}z3-probe/index.html`;
   const resolvedRefs = htmlRefs.map(({ tag, raw }) => ({ tag, raw, ...assertDistUrl(raw, htmlUrl, mount, "probe HTML") }));
+  const coiRef = resolvedRefs.find(({ raw }) => raw.endsWith("coi-serviceworker.js"));
+  assert.ok(coiRef, `${mount} probe HTML does not load the COI service worker`);
+  assert.equal(coiRef.file, coiServiceWorker, `${mount} probe HTML points at the wrong COI service worker`);
   const uiRef = resolvedRefs.find(({ tag, file }) => tag === "script" && readFileSync(file, "utf8").includes("Experimental compatibility spike"));
   assert.ok(uiRef, `${mount} probe UI module is missing from the HTML reference chain`);
   const uiText = readFileSync(uiRef.file, "utf8");
   assert.match(uiText, /new Worker/, `${mount} probe UI does not create a worker lazily`);
 
-  const workerRefs = [...uiText.matchAll(/[`"']((?:\.\.?\/)?worker-[A-Za-z0-9_-]+\.js)[`"']/g)].map((match) => match[1]);
+  const workerRefs = [...uiText.matchAll(/[`"']((?:\.\.?\/)*(?:[^`"']+\/)*worker-[A-Za-z0-9_-]+\.js)[`"']/g)].map((match) => match[1]);
   assert.equal(new Set(workerRefs).size, 1, `${mount} UI must contain exactly one application worker URL`);
   const workerRef = workerRefs[0];
   const worker = assertDistUrl(workerRef, uiRef.url, mount, `${mount} UI → application worker`);
+  assert.ok(worker.url.pathname.startsWith(`${mount}z3-probe/`), `${mount} application worker escapes the probe service-worker scope`);
   assert.ok(!worker.file.endsWith("z3-built.js"), "z3-built.js was incorrectly identified as the application worker");
   const workerText = readFileSync(worker.file, "utf8");
   assert.match(workerText, /z3-built\.js/, `${mount} application worker does not reference z3-built.js`);
@@ -91,6 +109,7 @@ for (const mount of ["/", "/repo/"]) {
 }
 
 const gameHtml = readFileSync(resolve(dist, "index.html"), "utf8");
+assert.doesNotMatch(gameHtml, /coi-serviceworker/, "normal game HTML registers the probe service worker");
 for (const source of [...gameHtml.matchAll(/<script[^>]+src="([^"]+)"/g)].map((match) => match[1])) {
   const gameScript = readFileSync(resolve(dist, `.${new URL(source, "https://example.test/").pathname}`), "utf8");
   assert.doesNotMatch(gameScript, /z3-built|z3-pages-probe|z3-solver/, "game entry bundle contains probe/Z3 code");

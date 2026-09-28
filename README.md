@@ -35,7 +35,7 @@ npm run test:solver
 
 ## Z3 GitHub Pages 兼容性探针（实验性）
 
-`/z3-probe/` 是与正常游戏入口隔离的实验页面。它固定使用官方 `z3-solver@5.2.0`（MIT），只有点击按钮后才加载应用级 Worker 和官方 Emscripten JS/WASM 资产；它不迁移或调用游戏的 159 条正式规则。页面提供相对路径 `./assets/Z3-LICENSE.txt` 的可访问 Z3 MIT 许可证链接（根路径部署为 `/z3-probe/assets/Z3-LICENSE.txt`，项目子路径模拟为 `/repo/z3-probe/assets/Z3-LICENSE.txt`）。
+`/z3-probe/` 是与正常游戏入口隔离的实验页面。它固定使用官方 `z3-solver@5.2.0`（MIT），只有点击按钮后才加载应用级 Worker 和官方 Emscripten JS/WASM 资产；它不迁移或调用游戏的 159 条正式规则。页面提供 Z3 与 `coi-serviceworker@0.1.7` 的 MIT 许可证链接。
 
 构建、运行 Node 侧最小模型（第一次 `sat`，加入规范答案阻断后第二次 `unsat`），并审计构建产物：
 
@@ -43,11 +43,11 @@ npm run test:solver
 npm run test:z3-probe
 ```
 
-页面会显示 `isSecureContext`、`crossOriginIsolated`、`SharedArrayBuffer`、WebAssembly、Worker 和当前路径。`PASS` 必须同时满足这些能力、Z3 初始化成功以及 `sat → blocking unsat`；`BLOCKED_HEADERS` 表示安全环境缺少 `crossOriginIsolated`/`SharedArrayBuffer`，`FAIL_ASSET`、`FAIL_INIT`、`FAIL_SOLVE` 和 `UNKNOWN` 分别表示资产、初始化、求解或未知结果问题。
+页面会显示 `isSecureContext`、`crossOriginIsolated`、`SharedArrayBuffer`、WebAssembly、Worker、Service Worker 控制状态和当前路径。`PASS` 必须同时满足这些能力、Z3 初始化成功以及 `sat → blocking unsat`；`BLOCKED_HEADERS` 表示 Service Worker 尝试后仍缺少 `crossOriginIsolated`/`SharedArrayBuffer`，`FAIL_ASSET`、`FAIL_INIT`、`FAIL_SOLVE` 和 `UNKNOWN` 分别表示资产、初始化、求解或未知结果问题。
 
 当前 production 构建中，官方 `z3-built.wasm` 为 34,938,413 bytes（约 8.0 MB gzip），官方 JS 为 353,813 bytes，应用级 Worker 为 162,713 bytes。WASM 下载和冷启动对移动网络、低端设备和首个点击延迟有明显风险；本探针不会把这些成本带入游戏首屏，但不能代表正式求解器迁移后的性能。
 
-GitHub Pages 不会由本仓库工作流设置 COOP/COEP 响应头。因此，Pages 上若 `crossOriginIsolated !== true`，探针必须判为 `BLOCKED_HEADERS`，不能把 Node smoke 或静态构建成功当作浏览器成功，也没有安装 service-worker header 绕过。应用级 Worker 不能消除这些官方线程 WASM 的 header 要求。
+GitHub Pages 不会由本仓库工作流设置 COOP/COEP 响应头。探针因此在自身 `/z3-probe/` 范围注册 `coi-serviceworker`：首次访问会自动重载，由 Service Worker 为受控响应补充 COOP/COEP。该注册不会覆盖正常游戏入口；若注册失败或浏览器不支持相应能力，探针仍判为 `BLOCKED_HEADERS`。这是一层客户端兼容方案，不等价于源站直接发送安全头。
 
 要在本地做带正确响应头的对照（production `dist`，只读静态服务器）：
 
@@ -56,7 +56,7 @@ npm run build
 npm run preview:probe -- --port=4173
 ```
 
-访问 `http://127.0.0.1:4173/z3-probe/`，服务器附加 `Cross-Origin-Opener-Policy: same-origin` 和 `Cross-Origin-Embedder-Policy: require-corp`，并为 WASM 返回 `application/wasm`。也可用 `npm run preview` 作为无特殊头的对照。使用临时 Playwright 1.63.0 / Chromium 153.0.8010.12（外置临时库）实测：带 headers 为 `PASS`，初始化 233.0 ms、两次 check 60.9/38.8 ms、总计 372.1 ms；无 headers 为 `BLOCKED_HEADERS`，点击后没有请求 Worker、Z3 JS 或 WASM；模拟 `/repo/z3-probe/` 也为 `PASS`（151.3/62.7/39.1/291.0 ms）。这些是 localhost production server 的热缓存/本地网络条件结果，不是冷缓存、真实网络或真实 GitHub Pages 冷启动测量；冷启动未测，也不代表真实 GitHub Pages 已部署成功。
+访问 `http://127.0.0.1:4173/z3-probe/`，服务器附加 `Cross-Origin-Opener-Policy: same-origin` 和 `Cross-Origin-Embedder-Policy: require-corp`，并为 WASM 返回 `application/wasm`。也可用 `npm run preview` 作为无源站特殊头的对照。使用临时 Playwright 1.63.0 / Chromium 153.0.8010.12（外置临时库）实测：带源站 headers 为 `PASS`，初始化 233.0 ms、两次 check 60.9/38.8 ms、总计 372.1 ms；加入 scope-limited Service Worker 后，无源站 headers 同样为 `PASS`（214.5/61.5/37.3 ms、总计 358.7 ms）。Service Worker 之前的真实 Pages 版本为 `BLOCKED_HEADERS` 且未请求 Z3 重资产；更新后的真实 Pages 仍待部署复测。这些 localhost 数字不是冷缓存、真实网络或真实 Pages 冷启动测量；冷启动未测。
 
 ## 部署到 GitHub Pages
 

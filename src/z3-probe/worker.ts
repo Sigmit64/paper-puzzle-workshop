@@ -43,7 +43,7 @@ self.addEventListener("message", (event: MessageEvent<RunMessage>) => {
 async function runProbe(): Promise<void> {
   const totalStart = performance.now();
   let api: Awaited<ReturnType<typeof init>> | undefined;
-  const z3Built = new URL("../z3-probe/assets/z3-built.js", self.location.href);
+  const z3Built = new URL("./z3-built.js", self.location.href);
   try {
     // z3-built.js is intentionally a classic script in the official package.
     // Vite emits this worker as a classic IIFE so importScripts is available.
@@ -57,9 +57,9 @@ async function runProbe(): Promise<void> {
   let initStart = performance.now();
   try {
     // In an application worker `self.location` points at Vite's worker
-    // chunk, not at the package-owned classic script. Explicitly anchor the
-    // official Emscripten locateFile hook to the copied asset directory so
-    // z3-built.wasm resolves under both `/` and a Pages `/repo/` mount.
+    // chunk, not at the package-owned classic script. The probe worker and
+    // official assets are deliberately co-located inside the service-worker
+    // scope, so anchor Emscripten's URLs to that shared directory.
     api = await init({
       locateFile: (file: string) => new URL(file, z3Built.href).href,
       mainScriptUrlOrBlob: z3Built.href,

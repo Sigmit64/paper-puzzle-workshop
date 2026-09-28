@@ -36,6 +36,8 @@ const isIsolated = window.crossOriginIsolated === true;
 const hasSharedArrayBuffer = typeof window.SharedArrayBuffer !== "undefined";
 const hasWebAssembly = typeof window.WebAssembly !== "undefined";
 const hasWorker = typeof window.Worker !== "undefined";
+const hasServiceWorker = "serviceWorker" in navigator;
+const serviceWorkerControlled = navigator.serviceWorker?.controller !== null;
 const currentUrl = new URL(window.location.href);
 const basePath = currentUrl.pathname.endsWith("/") ? currentUrl.pathname : `${currentUrl.pathname}/`;
 
@@ -52,6 +54,8 @@ root.innerHTML = `
         <div><dt>SharedArrayBuffer</dt><dd>${yesNo(hasSharedArrayBuffer)}</dd></div>
         <div><dt>WebAssembly</dt><dd>${yesNo(hasWebAssembly)}</dd></div>
         <div><dt>Worker</dt><dd>${yesNo(hasWorker)}</dd></div>
+        <div><dt>ServiceWorker</dt><dd>${yesNo(hasServiceWorker)}</dd></div>
+        <div><dt>ServiceWorker controlled</dt><dd>${yesNo(serviceWorkerControlled)}</dd></div>
         <div><dt>Vite base URL</dt><dd><code>${escapeHtml(import.meta.env.BASE_URL)}</code></dd></div>
         <div><dt>current path</dt><dd><code>${escapeHtml(`${basePath} (${currentUrl.origin})`)}</code></dd></div>
       </dl>
@@ -62,13 +66,13 @@ root.innerHTML = `
       <strong>Status: NOT_RUN</strong>
       <span>Click to lazily initialize Z3 and run the finite-domain uniqueness check.</span>
     </output>
-    <p class="notes">A PASS requires all capabilities above, COOP/COEP isolation, and SAT → blocking UNSAT. GitHub Pages response headers are not changed by this repository. Z3 attribution: <a href="./assets/Z3-LICENSE.txt">MIT license</a>.</p>
+    <p class="notes">A PASS requires a secure, cross-origin-isolated context and SAT → blocking UNSAT. GitHub Pages does not emit COOP/COEP itself, so this probe uses a scope-limited service worker to add them after an automatic first-load reload. Licenses: <a href="./assets/Z3-LICENSE.txt">Z3 MIT</a> · <a href="./COI-SERVICEWORKER-LICENSE.txt">COI service worker MIT</a>.</p>
   </article>
 `;
 
 const warning = document.querySelector<HTMLElement>("#header-warning");
 if (warning && (!isSecure || !isIsolated || !hasSharedArrayBuffer)) {
-  warning.textContent = "BLOCKED_HEADERS: this browser does not have a secure, cross-origin-isolated context with SharedArrayBuffer. The official threaded WASM package cannot be initialized here; configure COOP/COEP on a local server to compare the integration. No header workaround is installed.";
+  warning.textContent = "BLOCKED_HEADERS: this browser is not cross-origin isolated after the probe service worker registration attempt. The official threaded WASM package cannot be initialized in this browser/session.";
 }
 
 const output = document.querySelector<HTMLOutputElement>("#probe-output");

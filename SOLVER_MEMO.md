@@ -18,9 +18,9 @@
 
 - `z3-solver@5.2.0` 仅用于 `/z3-probe/` 的独立实验页面，不进入游戏首屏，也不迁移任何 159 条正式规则。
 - 探针在用户点击后于应用级 Worker 中加载官方 `z3-built.js`/`z3-built.wasm`，执行一个有限域模型：第一次 `sat` 投影 `x=0,y=1`，加入阻断后第二次 `unsat`。
-- 官方包使用线程 WASM，需要 `SharedArrayBuffer` 与 COOP/COEP；GitHub Pages 直接响应头未由本项目控制。Pages 缺少 `crossOriginIsolated` 时必须显示 `BLOCKED_HEADERS`，不能把 Node smoke、构建或本地带头服务器结果宣传为 Pages 成功。
+- 官方包使用线程 WASM，需要 `SharedArrayBuffer` 与 COOP/COEP；GitHub Pages 源站响应头未由本项目控制。探针用固定版本 `coi-serviceworker@0.1.7` 在 `/z3-probe/` 范围内注册 Service Worker，首次访问自动重载并为受控响应补头；正常游戏入口不注册。若隔离仍失败则显示 `BLOCKED_HEADERS`。
 - 当前 production 构建尺寸：官方 `z3-built.wasm` 34,938,413 bytes（约 8.0 MB gzip）、官方 JS 353,813 bytes、应用级 Worker 162,713 bytes。移动网络、低端设备和冷启动延迟是后续迁移的明确风险；这些尺寸不进入正常游戏首屏下载。
-- `npm run test:z3-probe` 覆盖 Node 模型 smoke、线程清理、probe HTML/worker/JS/WASM 产物以及根路径和模拟 `/repo/` 的资源解析。另用临时 Playwright 1.63.0 / Chromium 153.0.8010.12 实测 localhost production server：带 COOP/COEP 为 PASS（初始化 233.0 ms、check 60.9/38.8 ms、总计 372.1 ms），无 headers 为 BLOCKED_HEADERS 且无 Z3/Worker 重资产请求，模拟 `/repo/` 为 PASS（151.3/62.7/39.1 ms、总计 291.0 ms）。这些是 localhost 热缓存/本地网络条件结果，不是冷缓存、真实网络或真实 GitHub Pages 冷启动测量；冷启动未测，真实 GitHub Pages 仍未部署验证。
+- `npm run test:z3-probe` 覆盖 Node 模型 smoke、线程清理、Service Worker 及许可证、probe HTML/worker/JS/WASM 产物、scope 边界以及根路径和模拟 `/repo/` 的资源解析。临时 Playwright 1.63.0 / Chromium 153.0.8010.12 实测 localhost production server：带源站 COOP/COEP 为 PASS（233.0/60.9/38.8 ms、总计 372.1 ms）；无源站 headers、由 scope-limited Service Worker 隔离也为 PASS（214.5/61.5/37.3 ms、总计 358.7 ms）。Service Worker 之前的真实 Pages 部署为 BLOCKED_HEADERS 且无重资产请求；更新版 Pages 待复测。这些 localhost 数字不是冷缓存、真实网络或真实 Pages 冷启动测量；冷启动未测。
 
 ## 求解器结构
 

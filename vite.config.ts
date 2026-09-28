@@ -30,6 +30,17 @@ function z3ProbeAssets(): Plugin {
           source: readFileSync(sourceFile),
         });
       }
+
+      for (const [sourceFile, outputName] of [
+        [require.resolve("coi-serviceworker/coi-serviceworker.min.js"), "coi-serviceworker.js"],
+        [require.resolve("coi-serviceworker/LICENSE"), "COI-SERVICEWORKER-LICENSE.txt"],
+      ] as const) {
+        this.emitFile({
+          type: "asset",
+          fileName: `z3-probe/${outputName}`,
+          source: readFileSync(sourceFile),
+        });
+      }
     },
   };
 }
@@ -38,7 +49,14 @@ export default defineConfig({
   plugins: [react(), z3ProbeAssets()],
   // The application-level probe worker is emitted as a classic worker. This
   // lets it import the official Emscripten classic script with importScripts.
-  worker: { format: "iife" },
+  worker: {
+    format: "iife",
+    rollupOptions: {
+      output: {
+        entryFileNames: "z3-probe/assets/[name]-[hash].js",
+      },
+    },
+  },
   build: {
     rollupOptions: {
       input: {
