@@ -10,6 +10,8 @@
     "preview:probe": "node scripts/serve-probe.mjs",
     "check": "tsc -b",
     "test:solver": "node scripts/solver-smoke.mjs",
+    "test:loop-z3": "node scripts/loop-z3-test.mjs",
+    "benchmark:loop-z3": "node scripts/loop-z3-benchmark.mjs",
     "test:z3-probe": "npm run build && node scripts/z3-probe-smoke.mjs && node scripts/z3-probe-audit.mjs"
   },
   "dependencies": {

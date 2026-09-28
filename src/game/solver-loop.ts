@@ -3,20 +3,13 @@ import { cellsObservedByExterior, cellsTouchedByAnchor, clueAnchorOf } from "./p
 import type { PuzzleSolutionLayers, LoopSegment } from "./puzzle-model";
 import { clueCell, hasClueRule, hasGlobalRule, type CompiledPuzzle, type SolveOutcome } from "./solver-model";
 import type { CellId } from "./types";
+import { acceptLoopPilotCandidate, isLoopPilotCompatibleModel, loopOrientationMatches } from "./loop-pilot-validator";
 
 type LoopCellRequirement = "straight" | "turn";
 type LoopCellState = 0 | 1 | 2; // 0 回路，1 普通未经过格，2 不参与回路/计数的线索格
 
 function edgeKey(left: CellId, right: CellId) {
   return left < right ? `${left}-${right}` : `${right}-${left}`;
-}
-
-function orientationMatches(cell: CellId, before: CellId, after: CellId, requirement: LoopCellRequirement) {
-  const [row, column] = cell.split(":").map(Number);
-  const [beforeRow, beforeColumn] = before.split(":").map(Number);
-  const [afterRow, afterColumn] = after.split(":").map(Number);
-  const straight = (beforeRow === row && afterRow === row) || (beforeColumn === column && afterColumn === column);
-  return requirement === "straight" ? straight : !straight;
 }
 
 function findLoopSolutions(
@@ -60,9 +53,9 @@ function findLoopSolutions(
     if (path.length === visited.size) {
       if (!neighborMap.get(current)!.includes(start)) return;
       const startRequirement = requirements.get(start);
-      if (startRequirement && !orientationMatches(start, current, path[1], startRequirement)) return;
+      if (startRequirement && !loopOrientationMatches(start, current, path[1], startRequirement)) return;
       const currentRequirement = requirements.get(current);
-      if (currentRequirement && !orientationMatches(current, path[path.length - 2], start, currentRequirement)) return;
+      if (currentRequirement && !loopOrientationMatches(current, path[path.length - 2], start, currentRequirement)) return;
       if (!validateCycle(path)) return;
       const edges = path.map((cell, index) => edgeKey(cell, path[(index + 1) % path.length])).sort();
       signatures.add(edges.join("|"));
@@ -75,7 +68,7 @@ function findLoopSolutions(
       .sort((left, right) => neighborMap.get(left)!.length - neighborMap.get(right)!.length);
     for (const next of candidates) {
       const requirement = requirements.get(current);
-      if (requirement && path.length > 1 && !orientationMatches(current, path[path.length - 2], next, requirement)) continue;
+      if (requirement && path.length > 1 && !loopOrientationMatches(current, path[path.length - 2], next, requirement)) continue;
       used.add(next);
       path.push(next);
       walk(next);
@@ -93,6 +86,10 @@ export function solveLoop(model: CompiledPuzzle): SolveOutcome {
   const started = performance.now();
   const deadline = started + model.timeBudgetMs;
   const { board, solutionLimit } = model;
+  // The existing full validator remains useful as search-time pruning for all
+  // 46 loop rules. For the Z3 pilot subset, the shared pure validator below is
+  // the final acceptance gate immediately before a legacy candidate is added.
+  const pilotCompatible = isLoopPilotCompatibleModel(model);
   const stableCells = [...board.activeCells];
   const searchCells = [...stableCells];
   const indexByCell = new Map(stableCells.map((cell, index) => [cell, index]));
@@ -504,7 +501,7 @@ export function solveLoop(model: CompiledPuzzle): SolveOutcome {
     const isTurn = (cell: CellId) => {
       const index = position.get(cell);
       if (index === undefined) return false;
-      return orientationMatches(
+      return loopOrientationMatches(
         cell,
         path[(index - 1 + path.length) % path.length],
         path[(index + 1) % path.length],
@@ -734,11 +731,14 @@ export function solveLoop(model: CompiledPuzzle): SolveOutcome {
       timedOut ||= loops.timedOut;
       for (const signature of loops.signatures) {
         if (solutions.has(signature)) continue;
-        solutions.add(signature);
         const loop: LoopSegment[] = signature.split("|").map((part) => {
           const separator = part.indexOf("-");
           return { from: part.slice(0, separator) as import("./types").CellId, to: part.slice(separator + 1) as import("./types").CellId };
         });
+        if (pilotCompatible) {
+          if (!acceptLoopPilotCandidate(model, loop, signature)) continue;
+        }
+        solutions.add(signature);
         solutionLayers.push({ loop });
       }
     } else {
